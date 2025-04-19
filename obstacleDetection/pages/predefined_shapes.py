@@ -14,7 +14,12 @@ st.title("🎭 Predefined Shapes Mode - Pick from Dropdown")
 grid_placeholder = st.empty()
 grid, agent_positions, _ = initialize_grid(rows, cols, obstacles)
 display_grid(grid, grid_placeholder)
-
+# print('grid:', grid)
+# print('agent_positions:', agent_positions)
+# print('obstacles:', obstacles)
+# print('rows:', rows)
+# print('cols:', cols)
+# print('SHAPES:', grid_placeholder)
 shape_choice = st.selectbox("Choose a shape:", list(SHAPES.keys()), index=0)
 
 def validate_targets(target_positions, rows, cols):
@@ -36,13 +41,15 @@ def get_shape_positions(shape_choice, rows, cols):
 # After calling move_agents_no_collision in the button "Start Movement":
 if st.button("Start Movement"):
     target_positions = get_shape_positions(shape_choice, rows, cols)
+    # print('target_positions:', target_positions)
     grid = mark_reserved_cells(grid, target_positions, rows, cols)
-    
+    # print('grid after marking reserved cells:', grid)
     if len(agent_positions) > len(target_positions):
         st.warning(f"⚠ Not enough valid target positions! {len(agent_positions)} agents but only {len(target_positions)} targets.")
     else:
         grid, agent_positions = move_agents_no_collision(grid, agent_positions, target_positions, grid_placeholder, st.session_state["obstacles"])
-    
+        print("GRID: ",grid)
+        print(agent_positions)
     # Ensure the obstacles are rendered correctly after the movement
     display_grid(grid, grid_placeholder)
 
