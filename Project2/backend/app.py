@@ -123,6 +123,7 @@ def hungarian_assignment(agent_positions, target_positions):
             assignments.append((agent, target))
     return assignments
 
+
 def hungarian_furthest_assignment(agent_positions, target_positions):
     """
     Assign each agent to the furthest available target from its own position using the Hungarian algorithm.
@@ -139,14 +140,18 @@ def hungarian_furthest_assignment(agent_positions, target_positions):
         for j in range(size):
             if i < n_agents and j < n_targets:
                 # Negative distance for maximization
-                cost_matrix[i, j] = -manhattan_dist(agent_positions[i], target_positions[j])
+                cost_matrix[i, j] = -manhattan_dist(
+                    agent_positions[i], target_positions[j]
+                )
             else:
                 cost_matrix[i, j] = 999999
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     assignments = []
     for i in range(size):
         if row_ind[i] < n_agents and col_ind[i] < n_targets:
-            assignments.append((agent_positions[row_ind[i]], target_positions[col_ind[i]]))
+            assignments.append(
+                (agent_positions[row_ind[i]], target_positions[col_ind[i]])
+            )
     return assignments
     """
     Assign each agent to the furthest available target from its current position.
@@ -163,20 +168,25 @@ def hungarian_furthest_assignment(agent_positions, target_positions):
         available_targets.remove(furthest_target)
     return assignments
 
+
 def get_corners(target_positions):
     """Return a set of corner positions from the target positions."""
     rows = [r for r, _ in target_positions]
     cols = [c for _, c in target_positions]
     min_r, max_r = min(rows), max(rows)
     min_c, max_c = min(cols), max(cols)
-    corners = set([
-        (min_r, min_c),
-        (min_r, max_c),
-        (max_r, min_c),
-        (max_r, max_c),
-    ])
+    corners = set(
+        [
+            (min_r, min_c),
+            (min_r, max_c),
+            (max_r, min_c),
+            (max_r, max_c),
+        ]
+    )
     # Only keep corners that are actually targets
     return corners & set(target_positions)
+
+
 def hungarian_furthest_assignment_no_corner_priority(agent_positions, target_positions):
     """
     Assign each agent to the furthest available target from its own position using the Hungarian algorithm,
@@ -187,7 +197,9 @@ def hungarian_furthest_assignment_no_corner_priority(agent_positions, target_pos
 
     corners = get_corners(target_positions)
     # Sort targets: non-corners first, then corners
-    sorted_targets = [t for t in target_positions if t not in corners] + [t for t in target_positions if t in corners]
+    sorted_targets = [t for t in target_positions if t not in corners] + [
+        t for t in target_positions if t in corners
+    ]
 
     n_agents = len(agent_positions)
     n_targets = len(sorted_targets)
@@ -197,15 +209,21 @@ def hungarian_furthest_assignment_no_corner_priority(agent_positions, target_pos
         for j in range(size):
             if i < n_agents and j < n_targets:
                 # Negative distance for maximization
-                cost_matrix[i, j] = -manhattan_dist(agent_positions[i], sorted_targets[j])
+                cost_matrix[i, j] = -manhattan_dist(
+                    agent_positions[i], sorted_targets[j]
+                )
             else:
                 cost_matrix[i, j] = 999999
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     assignments = []
     for i in range(size):
         if row_ind[i] < n_agents and col_ind[i] < n_targets:
-            assignments.append((agent_positions[row_ind[i]], sorted_targets[col_ind[i]]))
+            assignments.append(
+                (agent_positions[row_ind[i]], sorted_targets[col_ind[i]])
+            )
     return assignments
+
+
 # ======================================================
 # 1. Inside-Out Algorithm (from your original code)
 # ======================================================
@@ -1208,9 +1226,11 @@ def shift_shape_coords(shape, grid_dims):
 
     return [(r + row_offset, c + col_offset) for r, c in shape]
 
+
 # ======================================================
 # 4. Genetic Algorithm
 # ======================================================
+
 
 def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_positions):
     """
@@ -1218,7 +1238,6 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
     Each chromosome is a permutation of target indices.
     """
     import copy
-    import random
 
     num_agents = len(agent_positions)
     num_targets = len(target_positions)
@@ -1242,7 +1261,9 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
     def evaluate_fitness(chrom):
         # Assign agents to targets according to chromosome
         assignments = []
-        valid_target_indices = [idx for idx in chrom if idx is not None] # Filter out None for agents without targets
+        valid_target_indices = [
+            idx for idx in chrom if idx is not None
+        ]  # Filter out None for agents without targets
         targets_to_assign = [target_positions[i] for i in valid_target_indices]
 
         # Use Hungarian for optimal assignment if needed, or direct mapping
@@ -1252,27 +1273,30 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
         for i in range(num_agents):
             target_idx = chrom[i]
             if target_idx is not None and target_idx < num_targets:
-                 # Ensure unique target assignment if needed, though GA might explore non-unique
-                 # For this fitness evaluation, allow multiple agents to target the same initially
-                 target_pos = target_positions[target_idx]
-                 agents_for_sim.append({"id": i, "pos": agent_positions[i], "target": target_pos})
-                 assigned_target_indices.add(target_idx)
+                # Ensure unique target assignment if needed, though GA might explore non-unique
+                # For this fitness evaluation, allow multiple agents to target the same initially
+                target_pos = target_positions[target_idx]
+                agents_for_sim.append(
+                    {"id": i, "pos": agent_positions[i], "target": target_pos}
+                )
+                assigned_target_indices.add(target_idx)
             else:
-                 # Agent has no target assigned by this chromosome
-                 agents_for_sim.append({"id": i, "pos": agent_positions[i], "target": None})
-
+                # Agent has no target assigned by this chromosome
+                agents_for_sim.append(
+                    {"id": i, "pos": agent_positions[i], "target": None}
+                )
 
         # Simulate movement (no animation, just count steps)
         sim_grid = copy.deepcopy(grid)
         sim_agents = copy.deepcopy(agents_for_sim)
         step_counter = 0
-        max_steps = 100 # Limit simulation steps for fitness evaluation
+        max_steps = 100  # Limit simulation steps for fitness evaluation
 
         # --- Simulation loop for fitness evaluation ---
         while step_counter < max_steps:
             all_reached = True
             move_dict = {}
-            conflict_positions = set() # Track intended next positions
+            conflict_positions = set()  # Track intended next positions
             agent_positions_set = set(ag["pos"] for ag in sim_agents)
 
             # Determine intended moves and detect conflicts
@@ -1281,20 +1305,27 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
                 target = ag["target"]
                 if target is None or current == target:
                     move_dict[current] = current
-                    conflict_positions.add(current) # Agent stays, occupies current cell
+                    conflict_positions.add(
+                        current
+                    )  # Agent stays, occupies current cell
                     continue
 
                 all_reached = False
                 agent_set_except_self = agent_positions_set - {current}
                 # Use sim_grid here
-                path = bfs_dynamic(current, target, sim_grid, agent_set_except_self, obstacle_positions)
+                path = bfs_dynamic(
+                    current, target, sim_grid, agent_set_except_self, obstacle_positions
+                )
 
                 if path:
                     next_step = path[0]
                     # Check against obstacles and other agents' intended moves
-                    if next_step not in conflict_positions and next_step not in obstacle_positions:
+                    if (
+                        next_step not in conflict_positions
+                        and next_step not in obstacle_positions
+                    ):
                         move_dict[current] = next_step
-                        conflict_positions.add(next_step) # Reserve this cell
+                        conflict_positions.add(next_step)  # Reserve this cell
                     else:
                         # Conflict: stay put
                         move_dict[current] = current
@@ -1316,7 +1347,7 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
                     processed_swaps.add(old_p)
                     processed_swaps.add(new_p)
                 elif old_p not in final_moves:
-                     final_moves[old_p] = new_p
+                    final_moves[old_p] = new_p
 
             # Update agent positions using final_moves
             updated_agents = []
@@ -1326,11 +1357,16 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
                 new_pos = final_moves.get(old_pos, old_pos)
 
                 # Safety check: ensure no two agents end up in the same final position or obstacle
-                if new_pos in current_positions_next_step or new_pos in obstacle_positions:
-                    new_pos = old_pos # If conflict persists or obstacle, stay put
+                if (
+                    new_pos in current_positions_next_step
+                    or new_pos in obstacle_positions
+                ):
+                    new_pos = old_pos  # If conflict persists or obstacle, stay put
                 current_positions_next_step.add(new_pos)
 
-                updated_agents.append({"id": ag["id"], "pos": new_pos, "target": ag["target"]})
+                updated_agents.append(
+                    {"id": ag["id"], "pos": new_pos, "target": ag["target"]}
+                )
 
             sim_agents = updated_agents
             step_counter += 1
@@ -1344,10 +1380,10 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
         penalty = 0
         for ag in sim_agents:
             if ag["target"] is not None and ag["pos"] != ag["target"]:
-                penalty += max_steps # Add significant penalty for each agent not reaching target
+                penalty += max_steps  # Add significant penalty for each agent not reaching target
 
         # print(f"GA Eval: Chrom {chrom} -> Steps: {step_counter}, Penalty: {penalty}")
-        return step_counter + penalty # Lower is better
+        return step_counter + penalty  # Lower is better
 
     def crossover(parent1, parent2):
         # Order crossover (OX) - suitable for permutation-based chromosomes
@@ -1357,28 +1393,30 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
 
         # Copy segment from parent1
         child[a:b] = parent1[a:b]
-        parent1_segment_targets = set(filter(None, parent1[a:b])) # Targets used in the segment
+        parent1_segment_targets = set(
+            filter(None, parent1[a:b])
+        )  # Targets used in the segment
 
         # Fill remaining slots from parent2, avoiding duplicates from segment
         fill_values = []
         for item in parent2:
             if item not in parent1_segment_targets:
-                 fill_values.append(item)
+                fill_values.append(item)
 
         child_idx = 0
         fill_idx = 0
         while child_idx < size:
             if child[child_idx] is None:
-                 # Ensure we don't run out of fill_values if lengths differ
-                 if fill_idx < len(fill_values):
-                     # Avoid adding a target already present elsewhere in the child
-                     if fill_values[fill_idx] not in filter(None, child):
-                         child[child_idx] = fill_values[fill_idx]
-                     else:
-                         # If target already used, try next fill value or leave None
-                         # This simple approach might leave Nones, handle appropriately
-                         pass # Or find another unused value if strict permutation needed
-                 fill_idx += 1
+                # Ensure we don't run out of fill_values if lengths differ
+                if fill_idx < len(fill_values):
+                    # Avoid adding a target already present elsewhere in the child
+                    if fill_values[fill_idx] not in filter(None, child):
+                        child[child_idx] = fill_values[fill_idx]
+                    else:
+                        # If target already used, try next fill value or leave None
+                        # This simple approach might leave Nones, handle appropriately
+                        pass  # Or find another unused value if strict permutation needed
+                fill_idx += 1
             child_idx += 1
 
         # Fill any remaining Nones if possible (e.g., if duplicates were skipped)
@@ -1388,14 +1426,13 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
 
         return child
 
-
     def mutate(chrom):
         # Swap mutation for permutation-based chromosomes
         size = len(chrom)
-        if size < 2: return # Cannot mutate if less than 2 elements
+        if size < 2:
+            return  # Cannot mutate if less than 2 elements
         a, b = random.sample(range(size), 2)
         chrom[a], chrom[b] = chrom[b], chrom[a]
-
 
     # Initialize population
     population = [random_chromosome() for _ in range(population_size)]
@@ -1406,7 +1443,12 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
         fitness_scores = [evaluate_fitness(chrom) for chrom in population]
 
         # Sort population by fitness (lower is better)
-        sorted_population = [x for _, x in sorted(zip(fitness_scores, population), key=lambda pair: pair[0])]
+        sorted_population = [
+            x
+            for _, x in sorted(
+                zip(fitness_scores, population), key=lambda pair: pair[0]
+            )
+        ]
 
         print(f"GA Generation {gen+1}/{generations}")
         print(f"  Best fitness this gen: {evaluate_fitness(sorted_population[0])}")
@@ -1414,7 +1456,7 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
         next_gen = []
 
         # Elitism: Keep the best individuals
-        elitism_count = max(1, population_size // 5) # Keep best 20% (at least 1)
+        elitism_count = max(1, population_size // 5)  # Keep best 20% (at least 1)
         next_gen.extend(sorted_population[:elitism_count])
 
         # Selection and Crossover
@@ -1457,7 +1499,9 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
             # Could add logic here to prevent multiple agents assigned to same target if needed
             target_pos = target_positions[target_idx]
             final_assignments.append((agent_positions[i], target_pos))
-            agents_final.append({"id": i, "pos": agent_positions[i], "target": target_pos})
+            agents_final.append(
+                {"id": i, "pos": agent_positions[i], "target": target_pos}
+            )
             assigned_target_indices_final.add(target_idx)
         else:
             # Agent has no target
@@ -1465,19 +1509,22 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
 
     print(f"GA: Final Assignments derived: {final_assignments}")
 
-
     # --- Animate the best solution using the collision-aware logic ---
-    agents = copy.deepcopy(agents_final) # Use the agents derived from the best chromosome
+    agents = copy.deepcopy(
+        agents_final
+    )  # Use the agents derived from the best chromosome
     simulation_steps = []
-    initial_agents_state = [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents]
+    initial_agents_state = [
+        {"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents
+    ]
     simulation_steps.append({"step": 0, "agents": initial_agents_state, "paths": {}})
 
     step_counter = 1
-    max_animation_steps = 200 # Allow more steps for animation if needed
+    max_animation_steps = 200  # Allow more steps for animation if needed
     while step_counter < max_animation_steps:
         all_reached = True
         move_dict = {}
-        conflict_positions = set() # Keep track of intended next positions
+        conflict_positions = set()  # Keep track of intended next positions
         agent_positions_set = set(ag["pos"] for ag in agents)
 
         # Determine intended moves and detect conflicts
@@ -1486,28 +1533,33 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
             target = ag["target"]
             if target is None or current == target:
                 move_dict[current] = current
-                conflict_positions.add(current) # Agent stays, occupies current cell
+                conflict_positions.add(current)  # Agent stays, occupies current cell
                 continue
 
             all_reached = False
             agent_set_except_self = agent_positions_set - {current}
             # Use the original grid for pathfinding during animation
-            path = bfs_dynamic(current, target, grid, agent_set_except_self, obstacle_positions)
+            path = bfs_dynamic(
+                current, target, grid, agent_set_except_self, obstacle_positions
+            )
 
             if path:
                 next_step = path[0]
                 # Check against obstacles and other agents' intended moves
-                if next_step not in conflict_positions and next_step not in obstacle_positions:
+                if (
+                    next_step not in conflict_positions
+                    and next_step not in obstacle_positions
+                ):
                     move_dict[current] = next_step
-                    conflict_positions.add(next_step) # Reserve this cell for next step
+                    conflict_positions.add(next_step)  # Reserve this cell for next step
                 else:
                     # Conflict: stay put
                     move_dict[current] = current
-                    conflict_positions.add(current) # Stay put, occupy current cell
+                    conflict_positions.add(current)  # Stay put, occupy current cell
             else:
                 # No path: stay put
                 move_dict[current] = current
-                conflict_positions.add(current) # Stay put, occupy current cell
+                conflict_positions.add(current)  # Stay put, occupy current cell
 
         # Resolve direct swaps (A->B, B->A should result in A->A, B->B)
         final_moves = {}
@@ -1522,12 +1574,14 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
                 final_moves[new_p] = new_p
                 processed_swaps.add(old_p)
                 processed_swaps.add(new_p)
-            elif old_p not in final_moves: # Ensure not already processed as part of a swap
-                 final_moves[old_p] = new_p
+            elif (
+                old_p not in final_moves
+            ):  # Ensure not already processed as part of a swap
+                final_moves[old_p] = new_p
 
         # Update agent positions using final_moves
         updated_agents = []
-        current_positions_next_step = set() # Track positions for safety check
+        current_positions_next_step = set()  # Track positions for safety check
         for ag in agents:
             old_pos = ag["pos"]
             # Use final_moves, default to staying put if somehow missing
@@ -1536,487 +1590,212 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
             # Safety check: ensure no two agents end up in the same final position or obstacle
             if new_pos in current_positions_next_step or new_pos in obstacle_positions:
                 # print(f"GA Sim: Persistent conflict or obstacle at {new_pos} for agent {ag['id']}. Staying at {old_pos}.")
-                new_pos = old_pos # If conflict persists or obstacle, stay put
+                new_pos = old_pos  # If conflict persists or obstacle, stay put
             current_positions_next_step.add(new_pos)
 
-            updated_agents.append({"id": ag["id"], "pos": new_pos, "target": ag["target"]})
+            updated_agents.append(
+                {"id": ag["id"], "pos": new_pos, "target": ag["target"]}
+            )
 
         agents = updated_agents
 
         # Record step for animation
-        step_agents_state = [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents]
-        simulation_steps.append({"step": step_counter, "agents": step_agents_state, "paths": {}}) # Add paths if needed
+        step_agents_state = [
+            {"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents
+        ]
+        simulation_steps.append(
+            {"step": step_counter, "agents": step_agents_state, "paths": {}}
+        )  # Add paths if needed
 
         step_counter += 1
         if all_reached:
-            print(f"GA: All agents reached targets in {step_counter-1} animation steps.")
+            print(
+                f"GA: All agents reached targets in {step_counter-1} animation steps."
+            )
             break
     # Add a check if max_steps was reached without completion
     if not all_reached and step_counter >= max_animation_steps:
-         print(f"GA: Max animation steps ({max_animation_steps}) reached.")
-         
+        print(f"GA: Max animation steps ({max_animation_steps}) reached.")
+
     return simulation_steps
+
+
+# ======================================================
+# Cellular Automata
+# ======================================================
+def move_agents_cellular_automata(
+    grid, agent_positions, target_positions, obstacle_positions
+):
     """
-    Genetic Algorithm for agent-to-target assignment (minimize total path cost using movement logic).
-    Each chromosome is a permutation of target indices.
+    Fixed cellular automata implementation with:
+    - Proper target assignment per agent
+    - Valid blocking checks
+    - Stable conflict resolution
     """
-    import copy
+    import random
 
-    num_agents = len(agent_positions)
-    num_targets = len(target_positions)
-    population_size = 10
-    generations = 10
-    mutation_rate = 0.2
+    # Initialize agents with temporary target storage
+    agents = [
+        {
+            "id": i,
+            "pos": pos,
+            "on_target": False,
+            "stable_steps": 0,
+            "current_target": None,  # Track target for current step
+        }
+        for i, pos in enumerate(agent_positions)
+    ]
 
-    # Each chromosome is a permutation of target indices (length = num_agents)
-    def random_chromosome():
-        indices = list(range(num_targets))
-        random.shuffle(indices)
-        return indices[:num_agents]
-
-    def evaluate_fitness(chrom):
-        # Assign agents to targets according to chromosome
-        assignments = [(agent_positions[i], target_positions[chrom[i]]) for i in range(min(num_agents, num_targets))]
-        # Simulate movement (no animation, just count steps)
-        agents = []
-        for idx, (agent, target) in enumerate(assignments):
-            agents.append({"id": idx, "pos": agent, "target": target})
-
-        # Add agents without targets (if more agents than targets)
-        assigned_positions = set(ag["pos"] for ag in agents)
-        for idx, agent in enumerate(agent_positions):
-            if agent not in assigned_positions:
-                agents.append({"id": idx, "pos": agent, "target": None})
-
-        sim_grid = copy.deepcopy(grid)
-        sim_agents = copy.deepcopy(agents)
-        step_counter = 0
-        max_steps = 100
-        while step_counter < max_steps:
-            all_reached = True
-            move_dict = {}
-            agent_positions_set = set(ag["pos"] for ag in sim_agents)
-            for ag in sim_agents:
-                current = ag["pos"]
-                target = ag["target"]
-                if target is None or current == target:
-                    move_dict[current] = current
-                    continue
-                all_reached = False
-                agent_set_except_self = agent_positions_set - {current}
-                path = bfs_dynamic(current, target, sim_grid, agent_set_except_self, obstacle_positions)
-                if path:
-                    move_dict[current] = path[0]
-                else:
-                    move_dict[current] = current
-            updated_agents = []
-            for ag in sim_agents:
-                old_pos = ag["pos"]
-                new_pos = move_dict[old_pos]
-                updated_agents.append({"id": ag["id"], "pos": new_pos, "target": ag["target"]})
-            sim_agents = updated_agents
-            agent_positions_set = set(ag["pos"] for ag in sim_agents)
-            step_counter += 1
-            if all_reached:
-                break
-        if not all_reached:
-            print(f"GA: Not all agents reached targets in max_steps ({max_steps}) for chrom {chrom}")
-        else:
-            print(f"GA: All agents reached targets in {step_counter} steps for chrom {chrom}")
-        return step_counter  # Lower is better
-
-    def crossover(parent1, parent2):
-        # Order crossover (OX)
-        size = len(parent1)
-        a, b = sorted(random.sample(range(size), 2))
-        child = [None] * size
-        child[a:b] = parent1[a:b]
-        fill = [x for x in parent2 if x not in child[a:b]]
-        idx = 0
-        for i in range(size):
-            if child[i] is None:
-                child[i] = fill[idx]
-                idx += 1
-        return child
-
-    def mutate(chrom):
-        a, b = random.sample(range(len(chrom)), 2)
-        chrom[a], chrom[b] = chrom[b], chrom[a]
-
-    # Initialize population
-    population = [random_chromosome() for _ in range(population_size)]
-
-    for gen in range(generations):
-        print(f"GA Generation {gen+1}/{generations}")
-        population.sort(key=evaluate_fitness)
-        print(f"  Best fitness this gen: {evaluate_fitness(population[0])}")
-        next_gen = population[:4]  # Elitism: keep best 4
-        while len(next_gen) < population_size:
-            parents = random.sample(population[:10], 2)
-            child = crossover(parents[0], parents[1])
-            if random.random() < mutation_rate:
-                mutate(child)
-            next_gen.append(child)
-        population = next_gen
-
-    # Best assignment
-    best = min(population, key=evaluate_fitness)
-    print(f"GA: Best assignment found: {best}")
-    assignments = [(agent_positions[i], target_positions[best[i]]) for i in range(min(num_agents, num_targets))]
-    print(f"GA: Assignments: {assignments}")
-
-    # Now, animate using your existing movement logic (step-by-step)
-    agents = []
-    for idx, (agent, target) in enumerate(assignments):
-        agents.append({"id": idx, "pos": agent, "target": target})
-
-    # Add agents without targets (if more agents than targets)
-    assigned_positions = set(ag["pos"] for ag in agents)
-    for idx, agent in enumerate(agent_positions):
-        if agent not in assigned_positions:
-            agents.append({"id": idx, "pos": agent, "target": None})
-
-    # Step-by-step movement (reuse your movement logic)
+    targets = set(target_positions)
+    obstacles = set(obstacle_positions)
     simulation_steps = []
-    initial_agents = [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents]
-    simulation_steps.append({"step": 0, "agents": initial_agents, "paths": {}})
+    step_counter = 0
+    max_steps = 500
 
-    step_counter = 1
-    max_steps = 100
+    # Initial state
+    simulation_steps.append(
+        {
+            "step": 0,
+            "agents": [
+                {"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]}
+                for ag in agents
+            ],
+            "paths": {},
+        }
+    )
+
+    # Precompute distances from all cells to all targets
+    distance_cache = {}
+    for r in range(grid.shape[0]):
+        for c in range(grid.shape[1]):
+            distance_cache[(r, c)] = {t: manhattan_dist((r, c), t) for t in targets}
+
+    def get_blocking_status(current_pos, agent_id):
+        """Check if agent is blocking access to any target"""
+        neighbors = get_neighbors(current_pos, grid.shape)
+        occupied = {ag["pos"] for ag in agents} | obstacles
+
+        for n in neighbors:
+            if n in occupied:
+                continue
+            # Check if this neighbor provides better access to any target
+            for t in targets - occupied_targets:
+                if distance_cache[n][t] < distance_cache[current_pos][t]:
+                    return True
+        return False
+
     while step_counter < max_steps:
-        all_reached = True
-        move_dict = {}
-        agent_positions_set = set(ag["pos"] for ag in agents)
+        # Update agent status and occupied targets
+        occupied_targets = set()
+        for ag in agents:
+            ag["on_target"] = ag["pos"] in targets
+            if ag["on_target"]:
+                occupied_targets.add(ag["pos"])
+                ag["stable_steps"] += 1
+            else:
+                ag["stable_steps"] = 0
+            ag["current_target"] = None  # Reset target for new step
+
+        # Completion check
+        if len(occupied_targets) == len(targets):
+            if all(ag["stable_steps"] >= 1 for ag in agents if ag["on_target"]):
+                break
+
+        random.shuffle(agents)
+        intended_moves = {}
+        occupied = {ag["pos"] for ag in agents} | obstacles
+
+        # Phase 1: Assign targets and plan moves
+        available_targets = list(targets - occupied_targets)
+        for ag in agents:
+            if ag["on_target"]:
+                continue
+
+            # Assign nearest available target
+            if available_targets:
+                ag["current_target"] = min(
+                    available_targets, key=lambda t: distance_cache[ag["pos"]][t]
+                )
+                available_targets.remove(ag["current_target"])
+
+        # Phase 2: Calculate moves
         for ag in agents:
             current = ag["pos"]
-            target = ag["target"]
-            if target is None or current == target:
-                move_dict[current] = current
-                continue
-            all_reached = False
-            agent_set_except_self = agent_positions_set - {current}
-            path = bfs_dynamic(current, target, grid, agent_set_except_self, obstacle_positions)
-            if path:
-                move_dict[current] = path[0]
-            else:
-                move_dict[current] = current
-        updated_agents = []
-        for ag in agents:
-            old_pos = ag["pos"]
-            new_pos = move_dict[old_pos]
-            updated_agents.append({"id": ag["id"], "pos": new_pos, "target": ag["target"]})
-        agents = updated_agents
-        agent_positions_set = set(ag["pos"] for ag in agents)
-        step_agents = [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents]
-        simulation_steps.append({"step": step_counter, "agents": step_agents, "paths": {}})
-        step_counter += 1
-        if all_reached:
-            print(f"GA: All agents reached targets in {step_counter} animation steps.")
-            break
+            ag_id = ag["id"]
 
-    return simulation_steps
-
-    """
-    Genetic Algorithm for agent-to-target assignment (minimize total path cost using movement logic).
-    Each chromosome is a permutation of target indices.
-    """
-    import copy
-
-    num_agents = len(agent_positions)
-    num_targets = len(target_positions)
-    population_size = 10
-    generations = 10
-    mutation_rate = 0.2
-
-    # Each chromosome is a permutation of target indices (length = num_agents)
-    def random_chromosome():
-        indices = list(range(num_targets))
-        random.shuffle(indices)
-        return indices[:num_agents]
-
-    def evaluate_fitness(chrom):
-        # Assign agents to targets according to chromosome
-        assignments = [(agent_positions[i], target_positions[chrom[i]]) for i in range(num_agents)]
-        # Simulate movement (no animation, just count steps)
-        agents = []
-        for idx, (agent, target) in enumerate(assignments):
-            agents.append({"id": idx, "pos": agent, "target": target})
-
-        # Use a copy of the grid to avoid modifying the original
-        sim_grid = copy.deepcopy(grid)
-        sim_agents = copy.deepcopy(agents)
-        step_counter = 0
-        max_steps = 100
-        while step_counter < max_steps:
-            all_reached = True
-            move_dict = {}
-            agent_positions_set = set(ag["pos"] for ag in sim_agents)
-            for ag in sim_agents:
-                current = ag["pos"]
-                target = ag["target"]
-                if target is None or current == target:
-                    move_dict[current] = current
-                    continue
-                all_reached = False
-                agent_set_except_self = agent_positions_set - {current}
-                path = bfs_dynamic(current, target, sim_grid, agent_set_except_self, obstacle_positions)
-                if path:
-                    move_dict[current] = path[0]
+            if ag["on_target"]:
+                if ag["stable_steps"] >= 11 and get_blocking_status(current, ag_id):
+                    # Yield movement logic
+                    candidates = [
+                        n
+                        for n in get_neighbors(current, grid.shape)
+                        if n not in occupied
+                        and n not in targets
+                        and n not in intended_moves.values()
+                    ]
+                    intended_moves[ag_id] = (
+                        random.choice(candidates) if candidates else current
+                    )
                 else:
-                    move_dict[current] = current
-            updated_agents = []
-            for ag in sim_agents:
-                old_pos = ag["pos"]
-                new_pos = move_dict[old_pos]
-                updated_agents.append({"id": ag["id"], "pos": new_pos, "target": ag["target"]})
-            sim_agents = updated_agents
-            agent_positions_set = set(ag["pos"] for ag in sim_agents)
-            step_counter += 1
-            if all_reached:
-                break
-        if not all_reached:
-            print(f"GA: Not all agents reached targets in max_steps ({max_steps}) for chrom {chrom}")
-        else:
-            print(f"GA: All agents reached targets in {step_counter} steps for chrom {chrom}")
-        return step_counter  # Lower is better
-
-    def crossover(parent1, parent2):
-        # Order crossover (OX)
-        size = len(parent1)
-        a, b = sorted(random.sample(range(size), 2))
-        child = [None] * size
-        child[a:b] = parent1[a:b]
-        fill = [x for x in parent2 if x not in child[a:b]]
-        idx = 0
-        for i in range(size):
-            if child[i] is None:
-                child[i] = fill[idx]
-                idx += 1
-        return child
-
-    def mutate(chrom):
-        a, b = random.sample(range(len(chrom)), 2)
-        chrom[a], chrom[b] = chrom[b], chrom[a]
-
-    # Initialize population
-    population = [random_chromosome() for _ in range(population_size)]
-
-    for gen in range(generations):
-        print(f"GA Generation {gen+1}/{generations}")
-        population.sort(key=evaluate_fitness)
-        print(f"  Best fitness this gen: {evaluate_fitness(population[0])}")
-        next_gen = population[:4]  # Elitism: keep best 4
-        while len(next_gen) < population_size:
-            parents = random.sample(population[:10], 2)
-            child = crossover(parents[0], parents[1])
-            if random.random() < mutation_rate:
-                mutate(child)
-            next_gen.append(child)
-        population = next_gen
-
-    # Best assignment
-    best = min(population, key=evaluate_fitness)
-    print(f"GA: Best assignment found: {best}")
-    assignments = [(agent_positions[i], target_positions[best[i]]) for i in range(num_agents)]
-    print(f"GA: Assignments: {assignments}")
-
-    # Now, animate using your existing movement logic (step-by-step)
-    agents = []
-    for idx, (agent, target) in enumerate(assignments):
-        agents.append({"id": idx, "pos": agent, "target": target})
-
-    # Track any agents without targets (if more agents than targets)
-    unassigned_agents = [a for a in agent_positions if a not in [ag["pos"] for ag in agents]]
-    for agent in unassigned_agents:
-        idx = agent_positions.index(agent)
-        agents.append({"id": idx, "pos": agent, "target": None})
-
-    # Step-by-step movement (reuse your movement logic)
-    simulation_steps = []
-    initial_agents = [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents]
-    simulation_steps.append({"step": 0, "agents": initial_agents, "paths": {}})
-
-    step_counter = 1
-    max_steps = 100
-    while step_counter < max_steps:
-        all_reached = True
-        move_dict = {}
-        agent_positions_set = set(ag["pos"] for ag in agents)
-        for ag in agents:
-            current = ag["pos"]
-            target = ag["target"]
-            if target is None or current == target:
-                move_dict[current] = current
+                    intended_moves[ag_id] = current
                 continue
-            all_reached = False
-            agent_set_except_self = agent_positions_set - {current}
-            path = bfs_dynamic(current, target, grid, agent_set_except_self, obstacle_positions)
-            if path:
-                move_dict[current] = path[0]
-            else:
-                move_dict[current] = current
-        updated_agents = []
+
+            if not ag["current_target"]:
+                intended_moves[ag_id] = current
+                continue
+
+            # Find best move toward target
+            candidates = [current] + [
+                n
+                for n in get_neighbors(current, grid.shape)
+                if n not in occupied and n not in intended_moves.values()
+            ]
+            best_move = min(
+                candidates, key=lambda m: distance_cache[m][ag["current_target"]]
+            )
+            intended_moves[ag_id] = best_move
+
+        # Phase 3: Resolve conflicts
+        move_counts = {}
+        for move in intended_moves.values():
+            move_counts[move] = move_counts.get(move, 0) + 1
+
         for ag in agents:
-            old_pos = ag["pos"]
-            new_pos = move_dict[old_pos]
-            updated_agents.append({"id": ag["id"], "pos": new_pos, "target": ag["target"]})
-        agents = updated_agents
-        agent_positions_set = set(ag["pos"] for ag in agents)
-        step_agents = [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents]
-        simulation_steps.append({"step": step_counter, "agents": step_agents, "paths": {}})
+            ag_id = ag["id"]
+            desired = intended_moves[ag_id]
+
+            if move_counts[desired] > 1:
+                # Stay put if conflicting
+                ag["pos"] = ag["pos"]
+            else:
+                ag["pos"] = desired
+
+        # Record step
+        simulation_steps.append(
+            {
+                "step": step_counter + 1,
+                "agents": [
+                    {"id": a["id"] + 1, "x": a["pos"][0], "y": a["pos"][1]}
+                    for a in agents
+                ],
+                "paths": {},
+            }
+        )
         step_counter += 1
-        if all_reached:
-            print(f"GA: All agents reached targets in {step_counter} animation steps.")
-            break
 
     return simulation_steps
 
-    """
-    Genetic Algorithm for agent-to-target assignment (minimize total path cost using movement logic).
-    Each chromosome is a permutation of target indices.
-    """
-    import copy
 
-    num_agents = len(agent_positions)
-    num_targets = len(target_positions)
-    population_size = 10
-    generations = 10
-    mutation_rate = 0.1
+def get_neighbors(pos, grid_shape):
+    """Get 4-directional neighbors for more structured movement"""
+    rows, cols = grid_shape
+    r, c = pos
+    return [
+        (r + dr, c + dc)
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        if 0 <= r + dr < rows and 0 <= c + dc < cols
+    ]
 
-    # Each chromosome is a permutation of target indices (length = num_agents)
-    def random_chromosome():
-        indices = list(range(num_targets))
-        random.shuffle(indices)
-        return indices[:num_agents]
-
-    def evaluate_fitness(chrom):
-        # Assign agents to targets according to chromosome
-        assignments = [(agent_positions[i], target_positions[chrom[i]]) for i in range(num_agents)]
-        # Simulate movement (no animation, just count steps)
-        agents = []
-        for idx, (agent, target) in enumerate(assignments):
-            agents.append({"id": idx, "pos": agent, "target": target})
-
-        # Use a copy of the grid to avoid modifying the original
-        sim_grid = copy.deepcopy(grid)
-        sim_agents = copy.deepcopy(agents)
-        step_counter = 0
-        max_steps = 100
-        while step_counter < max_steps:
-            all_reached = True
-            move_dict = {}
-            agent_positions_set = set(ag["pos"] for ag in sim_agents)
-            for ag in sim_agents:
-                current = ag["pos"]
-                target = ag["target"]
-                if target is None or current == target:
-                    move_dict[current] = current
-                    continue
-                all_reached = False
-                agent_set_except_self = agent_positions_set - {current}
-                path = bfs_dynamic(current, target, sim_grid, agent_set_except_self, obstacle_positions)
-                if path:
-                    move_dict[current] = path[0]
-                else:
-                    move_dict[current] = current
-            updated_agents = []
-            for ag in sim_agents:
-                old_pos = ag["pos"]
-                new_pos = move_dict[old_pos]
-                updated_agents.append({"id": ag["id"], "pos": new_pos, "target": ag["target"]})
-            sim_agents = updated_agents
-            agent_positions_set = set(ag["pos"] for ag in sim_agents)
-            step_counter += 1
-            if all_reached:
-                break
-        return step_counter  # Lower is better
-
-    def crossover(parent1, parent2):
-        # Order crossover (OX)
-        size = len(parent1)
-        a, b = sorted(random.sample(range(size), 2))
-        child = [None] * size
-        child[a:b] = parent1[a:b]
-        fill = [x for x in parent2 if x not in child[a:b]]
-        idx = 0
-        for i in range(size):
-            if child[i] is None:
-                child[i] = fill[idx]
-                idx += 1
-        return child
-
-    def mutate(chrom):
-        a, b = random.sample(range(len(chrom)), 2)
-        chrom[a], chrom[b] = chrom[b], chrom[a]
-
-    # Initialize population
-    population = [random_chromosome() for _ in range(population_size)]
-
-    for _ in range(generations):
-        population.sort(key=evaluate_fitness)
-        next_gen = population[:4]  # Elitism: keep best 4
-        while len(next_gen) < population_size:
-            parents = random.sample(population[:10], 2)
-            child = crossover(parents[0], parents[1])
-            if random.random() < mutation_rate:
-                mutate(child)
-            next_gen.append(child)
-        population = next_gen
-
-    # Best assignment
-    best = min(population, key=evaluate_fitness)
-    assignments = [(agent_positions[i], target_positions[best[i]]) for i in range(num_agents)]
-
-    # Now, animate using your existing movement logic (step-by-step)
-    # Reuse the movement loop from move_agents_no_collision or similar
-    agents = []
-    for idx, (agent, target) in enumerate(assignments):
-        agents.append({"id": idx, "pos": agent, "target": target})
-
-    # Track any agents without targets (if more agents than targets)
-    unassigned_agents = [a for a in agent_positions if a not in [ag["pos"] for ag in agents]]
-    for agent in unassigned_agents:
-        idx = agent_positions.index(agent)
-        agents.append({"id": idx, "pos": agent, "target": None})
-
-    # Step-by-step movement (reuse your movement logic)
-    simulation_steps = []
-    initial_agents = [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents]
-    simulation_steps.append({"step": 0, "agents": initial_agents, "paths": {}})
-
-    step_counter = 1
-    max_steps = 100
-    while step_counter < max_steps:
-        all_reached = True
-        move_dict = {}
-        agent_positions_set = set(ag["pos"] for ag in agents)
-        for ag in agents:
-            current = ag["pos"]
-            target = ag["target"]
-            if target is None or current == target:
-                move_dict[current] = current
-                continue
-            all_reached = False
-            agent_set_except_self = agent_positions_set - {current}
-            path = bfs_dynamic(current, target, grid, agent_set_except_self, obstacle_positions)
-            if path:
-                move_dict[current] = path[0]
-            else:
-                move_dict[current] = current
-        updated_agents = []
-        for ag in agents:
-            old_pos = ag["pos"]
-            new_pos = move_dict[old_pos]
-            updated_agents.append({"id": ag["id"], "pos": new_pos, "target": ag["target"]})
-        agents = updated_agents
-        agent_positions_set = set(ag["pos"] for ag in agents)
-        step_agents = [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents]
-        simulation_steps.append({"step": step_counter, "agents": step_agents, "paths": {}})
-        step_counter += 1
-        if all_reached:
-            break
-
-    return simulation_steps
 
 # ======================================================
 # API Endpoints
@@ -2103,6 +1882,10 @@ def run_simulation():
             )
         elif algorithm == "Genetic-Algorithm":
             simulation_steps = run_genetic_algorithm(
+                grid, agent_positions, target_positions, obstacle_positions
+            )
+        elif algorithm == "cellular-automata":
+            simulation_steps = move_agents_cellular_automata(
                 grid, agent_positions, target_positions, obstacle_positions
             )
         else:  # Default to inside-out

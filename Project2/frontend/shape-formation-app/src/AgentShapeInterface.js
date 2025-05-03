@@ -809,6 +809,7 @@ const handleCellInteraction = (row, col) => {
                   <option value="leader-follower">Leader-Follower</option>
                   <option value="centralized">Centralized</option>
                   <option value="Genetic-Algorithm">Genetic Algorithm</option>
+                  <option value="cellular-automata">Cellular Automata</option>
                 </select>
                 <p className="form-text">{getAlgorithmDescription()}</p>
               </div>
