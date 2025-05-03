@@ -35,6 +35,10 @@ const AgentShapeInterface = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackIntervalId, setPlaybackIntervalId] = useState(null);
 
+  // adding state for obstacles (obstacle detection code)
+  const [obstacles, setObstacles] = useState([]);
+  const [isObstacleDetected, setIsObstacleDetected] = useState(false);
+
   // Initialize grid
   useEffect(() => {
     const newGrid = Array(gridSize).fill().map(() => 
@@ -232,6 +236,8 @@ useEffect(() => {
   const changeMode = (newMode) => {
     setMode(newMode);
     resetGrid();
+
+    // add new placement mode for the other options   
     
     if (newMode === 'selection') {
       setMessage("Select a mode to begin");
@@ -367,6 +373,8 @@ useEffect(() => {
         return "In this approach, one agent (the leader) moves to its target while others follow behind. After the leader reaches its target, other agents move independently.";
       case 'centralized':
         return "The leader agent first visits all target positions one by one. As it visits each target, the closest available agent is assigned to stay at that position.";
+      case 'Genetic-Algorithm':
+        return "This algorithm uses a genetic approach to optimize the shape formation. It evolves a population of solutions over generations, selecting the best ones based on fitness criteria.";
       default:
         return "";
     }
@@ -800,6 +808,7 @@ const handleCellInteraction = (row, col) => {
                   <option value="inside-out">Inside-Out</option>
                   <option value="leader-follower">Leader-Follower</option>
                   <option value="centralized">Centralized</option>
+                  <option value="Genetic-Algorithm">Genetic Algorithm</option>
                 </select>
                 <p className="form-text">{getAlgorithmDescription()}</p>
               </div>
