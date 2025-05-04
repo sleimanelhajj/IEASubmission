@@ -1623,36 +1623,54 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
 # ======================================================
 # Cellular Automata
 # ======================================================
+def generate_targets(grid, axiom="F+F+F+F", steps=3):
+    """Generate targets with bounds checking"""
+    targets = set()
+    rows, cols = grid.shape
+    x, y = rows // 2, cols // 2  # Start at center
+    direction = (0, 1)
+    stack = []
+
+    for cmd in axiom:
+        if cmd == "F":
+            new_x = x + direction[0]
+            new_y = y + direction[1]
+            if 0 <= new_x < rows and 0 <= new_y < cols:
+                x, y = new_x, new_y
+                targets.add((x, y))
+        elif cmd == "+":
+            direction = (-direction[1], direction[0])  # 90° left
+        elif cmd == "-":
+            direction = (direction[1], -direction[0])  # 90° right
+        elif cmd == "[":
+            stack.append((x, y, direction))
+        elif cmd == "]":
+            if stack:
+                x, y, direction = stack.pop()
+    return targets
+
+
 def move_agents_cellular_automata(
     grid, agent_positions, target_positions, obstacle_positions
 ):
     """
-    Fixed cellular automata implementation with:
-    - Proper target assignment per agent
-    - Valid blocking checks
-    - Stable conflict resolution
+    Pure CA: No randomness, only local information.
+    - Settled agents (on target) with empty target neighbors "invite" all unsettled agents.
+    - Unsettled agents move toward the nearest invitation using only local moves.
+    - Once an agent reaches a target, it locks/settles.
     """
-    import random
-
-    # Initialize agents with temporary target storage
-    agents = [
-        {
-            "id": i,
-            "pos": pos,
-            "on_target": False,
-            "stable_steps": 0,
-            "current_target": None,  # Track target for current step
-        }
-        for i, pos in enumerate(agent_positions)
-    ]
-
     targets = set(target_positions)
     obstacles = set(obstacle_positions)
     simulation_steps = []
     step_counter = 0
     max_steps = 500
 
-    # Initial state
+    # Agent state: id, pos, settled (on target)
+    agents = [
+        {"id": i, "pos": pos, "settled": False}
+        for i, pos in enumerate(agent_positions)
+    ]
+
     simulation_steps.append(
         {
             "step": 0,
@@ -1664,137 +1682,108 @@ def move_agents_cellular_automata(
         }
     )
 
-    # Precompute distances from all cells to all targets
-    distance_cache = {}
-    for r in range(grid.shape[0]):
-        for c in range(grid.shape[1]):
-            distance_cache[(r, c)] = {t: manhattan_dist((r, c), t) for t in targets}
-
-    def get_blocking_status(current_pos, agent_id):
-        """Check if agent is blocking access to any target"""
-        neighbors = get_neighbors(current_pos, grid.shape)
-        occupied = {ag["pos"] for ag in agents} | obstacles
-
-        for n in neighbors:
-            if n in occupied:
-                continue
-            # Check if this neighbor provides better access to any target
-            for t in targets - occupied_targets:
-                if distance_cache[n][t] < distance_cache[current_pos][t]:
-                    return True
-        return False
+    def get_neighbors(pos):
+        r, c = pos
+        neighbors = []
+        for dr in [-1, 0, 1]:
+            for dc in [-1, 0, 1]:
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < grid.shape[0] and 0 <= nc < grid.shape[1]:
+                    neighbors.append((nr, nc))
+        return neighbors
 
     while step_counter < max_steps:
-        # Update agent status and occupied targets
-        occupied_targets = set()
-        for ag in agents:
-            ag["on_target"] = ag["pos"] in targets
-            if ag["on_target"]:
-                occupied_targets.add(ag["pos"])
-                ag["stable_steps"] += 1
-            else:
-                ag["stable_steps"] = 0
-            ag["current_target"] = None  # Reset target for new step
-
-        # Completion check
-        if len(occupied_targets) == len(targets):
-            if all(ag["stable_steps"] >= 1 for ag in agents if ag["on_target"]):
-                break
-
-        random.shuffle(agents)
-        intended_moves = {}
         occupied = {ag["pos"] for ag in agents} | obstacles
+        settled_positions = {ag["pos"] for ag in agents if ag["settled"]}
 
-        # Phase 1: Assign targets and plan moves
-        available_targets = list(targets - occupied_targets)
+        # Step 1: Settled agents broadcast invitations for empty target neighbors
+        invitations = set()
         for ag in agents:
-            if ag["on_target"]:
+            if ag["settled"]:
+                for n in get_neighbors(ag["pos"]):
+                    if n in targets and n not in occupied:
+                        invitations.add(n)
+
+        # Step 2: Each agent decides where to move (no randomness)
+        intended_moves = {}
+        for ag in agents:
+            if ag["settled"]:
+                intended_moves[ag["id"]] = ag["pos"]
                 continue
 
-            # Assign nearest available target
-            if available_targets:
-                ag["current_target"] = min(
-                    available_targets, key=lambda t: distance_cache[ag["pos"]][t]
-                )
-                available_targets.remove(ag["current_target"])
+            # If on a target, settle
+            if ag["pos"] in targets:
+                ag["settled"] = True
+                intended_moves[ag["id"]] = ag["pos"]
+                continue
 
-        # Phase 2: Calculate moves
-        for ag in agents:
-            current = ag["pos"]
-            ag_id = ag["id"]
-
-            if ag["on_target"]:
-                if ag["stable_steps"] >= 11 and get_blocking_status(current, ag_id):
-                    # Yield movement logic
-                    candidates = [
-                        n
-                        for n in get_neighbors(current, grid.shape)
-                        if n not in occupied
-                        and n not in targets
-                        and n not in intended_moves.values()
-                    ]
-                    intended_moves[ag_id] = (
-                        random.choice(candidates) if candidates else current
-                    )
+            # If there are invitations, move toward the closest invitation
+            if invitations:
+                # Move toward the closest invitation
+                min_dist = float("inf")
+                best_neighbor = ag["pos"]
+                for n in [ag["pos"]] + get_neighbors(ag["pos"]):
+                    if n not in occupied and n not in intended_moves.values():
+                        dist = min(abs(n[0] - inv[0]) + abs(n[1] - inv[1]) for inv in invitations)
+                        if dist < min_dist:
+                            min_dist = dist
+                            best_neighbor = n
+                intended_moves[ag["id"]] = best_neighbor
+            else:
+                # No invitations: move toward the closest empty target
+                empty_targets = [t for t in targets if t not in occupied and t not in intended_moves.values()]
+                if empty_targets:
+                    min_dist = float("inf")
+                    best_neighbor = ag["pos"]
+                    for n in [ag["pos"]] + get_neighbors(ag["pos"]):
+                        if n not in occupied and n not in intended_moves.values():
+                            dist = min(abs(n[0] - t[0]) + abs(n[1] - t[1]) for t in empty_targets)
+                            if dist < min_dist:
+                                min_dist = dist
+                                best_neighbor = n
+                    intended_moves[ag["id"]] = best_neighbor
                 else:
-                    intended_moves[ag_id] = current
-                continue
+                    intended_moves[ag["id"]] = ag["pos"]
 
-            if not ag["current_target"]:
-                intended_moves[ag_id] = current
-                continue
-
-            # Find best move toward target
-            candidates = [current] + [
-                n
-                for n in get_neighbors(current, grid.shape)
-                if n not in occupied and n not in intended_moves.values()
-            ]
-            best_move = min(
-                candidates, key=lambda m: distance_cache[m][ag["current_target"]]
-            )
-            intended_moves[ag_id] = best_move
-
-        # Phase 3: Resolve conflicts
+        # Step 3: Resolve conflicts (if two agents want the same cell, both stay)
         move_counts = {}
         for move in intended_moves.values():
             move_counts[move] = move_counts.get(move, 0) + 1
 
         for ag in agents:
-            ag_id = ag["id"]
-            desired = intended_moves[ag_id]
-
+            desired = intended_moves[ag["id"]]
             if move_counts[desired] > 1:
-                # Stay put if conflicting
-                ag["pos"] = ag["pos"]
-            else:
-                ag["pos"] = desired
+                intended_moves[ag["id"]] = ag["pos"]
+
+        # Step 4: Update agent positions and settled state
+        for ag in agents:
+            ag["pos"] = intended_moves[ag["id"]]
+            if ag["pos"] in targets:
+                ag["settled"] = True
 
         # Record step
         simulation_steps.append(
             {
                 "step": step_counter + 1,
                 "agents": [
-                    {"id": a["id"] + 1, "x": a["pos"][0], "y": a["pos"][1]}
-                    for a in agents
+                    {"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]}
+                    for ag in agents
                 ],
                 "paths": {},
             }
         )
+
         step_counter += 1
 
+        # Stop if all targets are filled by agents
+        if all(ag["settled"] for ag in agents) and len(
+            {ag["pos"] for ag in agents if ag["settled"]}
+        ) == len(targets):
+            break
+
     return simulation_steps
-
-
-def get_neighbors(pos, grid_shape):
-    """Get 4-directional neighbors for more structured movement"""
-    rows, cols = grid_shape
-    r, c = pos
-    return [
-        (r + dr, c + dc)
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]
-        if 0 <= r + dr < rows and 0 <= c + dc < cols
-    ]
 
 
 # ======================================================
@@ -1899,6 +1888,7 @@ def run_simulation():
     except Exception as e:
         import traceback
 
+        print(traceback.format_exc())
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
