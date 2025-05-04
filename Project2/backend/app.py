@@ -5,6 +5,7 @@ import time
 from collections import deque
 from scipy.optimize import linear_sum_assignment
 import random
+from scipy.optimize import linear_sum_assignment
 
 app = Flask(__name__)
 CORS(app)  # Enable cross-origin requests
@@ -223,6 +224,26 @@ def hungarian_furthest_assignment_no_corner_priority(agent_positions, target_pos
             )
     return assignments
 
+
+def get_neighbors(pos, grid_shape):
+    r, c = pos
+    rows, cols = grid_shape
+    # 8-direction movement
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+    neighbors = []
+    for dr, dc in directions:
+        nr, nc = r + dr, c + dc
+        if 0 <= nr < rows and 0 <= nc < cols:
+            neighbors.append((nr, nc))
+    return neighbors
+
+
+def is_adjacent(pos1, pos2):
+    """Returns True if pos1 is adjacent (including diagonals) to pos2."""
+    return max(abs(pos1[0] - pos2[0]), abs(pos1[1] - pos2[1])) == 1
+
+
+# minmax integration
 
 # ======================================================
 # 1. Inside-Out Algorithm (from your original code)
@@ -1258,7 +1279,12 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
             # If more targets than agents, assign agents to a subset of targets
             return indices[:num_agents]
 
+    fitness_cache = {}  # Add this line
+
     def evaluate_fitness(chrom):
+        key = tuple(chrom)
+        if key in fitness_cache:
+            return fitness_cache[key]
         # Assign agents to targets according to chromosome
         assignments = []
         valid_target_indices = [
@@ -1383,7 +1409,9 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
                 penalty += max_steps  # Add significant penalty for each agent not reaching target
 
         # print(f"GA Eval: Chrom {chrom} -> Steps: {step_counter}, Penalty: {penalty}")
-        return step_counter + penalty  # Lower is better
+        fitness = step_counter + penalty  # Lower is better
+        fitness_cache[key] = fitness
+        return fitness  # Lower is better
 
     def crossover(parent1, parent2):
         # Order crossover (OX) - suitable for permutation-based chromosomes
@@ -1623,31 +1651,6 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
 # ======================================================
 # Cellular Automata
 # ======================================================
-def generate_targets(grid, axiom="F+F+F+F", steps=3):
-    """Generate targets with bounds checking"""
-    targets = set()
-    rows, cols = grid.shape
-    x, y = rows // 2, cols // 2  # Start at center
-    direction = (0, 1)
-    stack = []
-
-    for cmd in axiom:
-        if cmd == "F":
-            new_x = x + direction[0]
-            new_y = y + direction[1]
-            if 0 <= new_x < rows and 0 <= new_y < cols:
-                x, y = new_x, new_y
-                targets.add((x, y))
-        elif cmd == "+":
-            direction = (-direction[1], direction[0])  # 90° left
-        elif cmd == "-":
-            direction = (direction[1], -direction[0])  # 90° right
-        elif cmd == "[":
-            stack.append((x, y, direction))
-        elif cmd == "]":
-            if stack:
-                x, y, direction = stack.pop()
-    return targets
 
 
 def move_agents_cellular_automata(
@@ -1667,8 +1670,7 @@ def move_agents_cellular_automata(
 
     # Agent state: id, pos, settled (on target)
     agents = [
-        {"id": i, "pos": pos, "settled": False}
-        for i, pos in enumerate(agent_positions)
+        {"id": i, "pos": pos, "settled": False} for i, pos in enumerate(agent_positions)
     ]
 
     simulation_steps.append(
@@ -1726,23 +1728,40 @@ def move_agents_cellular_automata(
                 best_neighbor = ag["pos"]
                 for n in [ag["pos"]] + get_neighbors(ag["pos"]):
                     if n not in occupied and n not in intended_moves.values():
-                        dist = min(abs(n[0] - inv[0]) + abs(n[1] - inv[1]) for inv in invitations)
+                        dist = min(
+                            abs(n[0] - inv[0]) + abs(n[1] - inv[1])
+                            for inv in invitations
+                        )
                         if dist < min_dist:
                             min_dist = dist
                             best_neighbor = n
                 intended_moves[ag["id"]] = best_neighbor
             else:
-                # No invitations: move toward the closest empty target
-                empty_targets = [t for t in targets if t not in occupied and t not in intended_moves.values()]
+                # No invitations: only allow up (north) movement toward the closest empty target
+                empty_targets = [
+                    t
+                    for t in targets
+                    if t not in occupied and t not in intended_moves.values()
+                ]
                 if empty_targets:
                     min_dist = float("inf")
                     best_neighbor = ag["pos"]
-                    for n in [ag["pos"]] + get_neighbors(ag["pos"]):
-                        if n not in occupied and n not in intended_moves.values():
-                            dist = min(abs(n[0] - t[0]) + abs(n[1] - t[1]) for t in empty_targets)
-                            if dist < min_dist:
-                                min_dist = dist
-                                best_neighbor = n
+                    # Only consider staying or moving up
+                    r, c = ag["pos"]
+                    up_neighbor = (r - 1, c) if r > 0 else ag["pos"]
+                    candidates = [ag["pos"]]
+                    if (
+                        up_neighbor not in occupied
+                        and up_neighbor not in intended_moves.values()
+                    ):
+                        candidates.append(up_neighbor)
+                    for n in candidates:
+                        dist = min(
+                            abs(n[0] - t[0]) + abs(n[1] - t[1]) for t in empty_targets
+                        )
+                        if dist < min_dist:
+                            min_dist = dist
+                            best_neighbor = n
                     intended_moves[ag["id"]] = best_neighbor
                 else:
                     intended_moves[ag["id"]] = ag["pos"]
@@ -1782,6 +1801,542 @@ def move_agents_cellular_automata(
             {ag["pos"] for ag in agents if ag["settled"]}
         ) == len(targets):
             break
+
+    return simulation_steps
+
+
+# ======================================================
+# Minimax
+# ======================================================
+
+
+def move_agents_minimax(grid, agent_positions, target_positions, obstacle_positions):
+    """
+    Assign agents to targets to minimize the maximum distance any agent must travel.
+    Then move agents step by step toward their assigned targets.
+    """
+    import numpy as np
+
+    # Step 1: Assign agents to targets to minimize the maximum distance
+    n_agents = len(agent_positions)
+    n_targets = len(target_positions)
+    size = max(n_agents, n_targets)
+    cost_matrix = np.zeros((size, size), dtype=int)
+    for i in range(size):
+        for j in range(size):
+            if i < n_agents and j < n_targets:
+                cost_matrix[i, j] = manhattan_dist(
+                    agent_positions[i], target_positions[j]
+                )
+            else:
+                cost_matrix[i, j] = 999999
+
+    # Hungarian minimizes total cost, not max; so we brute-force for small n
+    from itertools import permutations
+
+    min_max_dist = float("inf")
+    best_assignment = None
+    for perm in permutations(range(n_targets), min(n_agents, n_targets)):
+        max_dist = 0
+        for i, j in enumerate(perm):
+            max_dist = max(max_dist, cost_matrix[i, j])
+        if max_dist < min_max_dist:
+            min_max_dist = max_dist
+            best_assignment = perm
+
+    assignments = []
+    if best_assignment:
+        for i, j in enumerate(best_assignment):
+            assignments.append((agent_positions[i], target_positions[j]))
+
+    # Step 2: Move agents step by step toward their assigned targets
+    agents = []
+    for idx, (agent, target) in enumerate(assignments):
+        agents.append({"id": idx, "pos": agent, "target": target})
+
+    # Track any agents without targets
+    unassigned_agents = [
+        a for a in agent_positions if a not in [ag["pos"] for ag in agents]
+    ]
+    for agent in unassigned_agents:
+        agent_idx = agent_positions.index(agent)
+        agents.append({"id": agent_idx, "pos": agent, "target": None})
+
+    simulation_steps = []
+    initial_agents = [
+        {"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents
+    ]
+    simulation_steps.append({"step": 0, "agents": initial_agents, "paths": {}})
+
+    step_counter = 1
+    max_steps = 100
+    while step_counter < max_steps:
+        all_reached = True
+        move_dict = {}
+        conflict_positions = set()
+        agent_positions_set = set(ag["pos"] for ag in agents)
+
+        for ag in agents:
+            current = ag["pos"]
+            target = ag["target"]
+            if target is None or current == target:
+                move_dict[current] = current
+                conflict_positions.add(current)
+                continue
+
+            all_reached = False
+            agent_set_except_self = agent_positions_set - {current}
+            path = bfs_dynamic(
+                current, target, grid, agent_set_except_self, obstacle_positions
+            )
+            if path:
+                next_step = path[0]
+                if next_step not in conflict_positions:
+                    move_dict[current] = next_step
+                    conflict_positions.add(next_step)
+                else:
+                    move_dict[current] = current
+                    conflict_positions.add(current)
+            else:
+                move_dict[current] = current
+                conflict_positions.add(current)
+
+        # Resolve direct swaps
+        final_moves = {}
+        for old_p, new_p in move_dict.items():
+            if new_p in move_dict and move_dict[new_p] == old_p and new_p != old_p:
+                final_moves[old_p] = old_p
+                final_moves[new_p] = new_p
+            else:
+                final_moves[old_p] = new_p
+
+        updated_agents = []
+        current_positions_next_step = set()
+        for ag in agents:
+            old_pos = ag["pos"]
+            new_pos = final_moves.get(old_pos, old_pos)
+            if new_pos in current_positions_next_step or new_pos in obstacle_positions:
+                new_pos = old_pos
+            current_positions_next_step.add(new_pos)
+            updated_agents.append(
+                {"id": ag["id"], "pos": new_pos, "target": ag["target"]}
+            )
+
+        agents = updated_agents
+        step_agents = [
+            {"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents
+        ]
+        simulation_steps.append(
+            {"step": step_counter, "agents": step_agents, "paths": {}}
+        )
+        step_counter += 1
+        if all_reached:
+            break
+
+    return simulation_steps
+
+
+# ======================================================
+# Expectimax
+# ======================================================
+
+
+def move_agents_expectimax(
+    grid,
+    agent_positions,
+    target_positions,
+    obstacle_positions,
+    max_depth=2,
+    obstacle_prob=0.2,
+):
+    """
+    Expectimax-based agent movement with random obstacle appearance/disappearance.
+    Only supports a single agent for simplicity.
+    Returns obstacle positions at each step for visualization.
+    """
+    import copy
+
+    agent_pos = agent_positions[0]
+    target_pos = target_positions[0]
+    simulation_steps = []
+    step_counter = 0
+    max_steps = 100
+
+    static_obstacles = set(obstacle_positions)  # <-- Always include these
+
+    def evaluation(pos):
+        return -manhattan_dist(pos, target_pos)
+
+    def get_neighbors(pos):
+        r, c = pos
+        directions = [
+            (-1, 0),
+            (1, 0),
+            (0, -1),
+            (0, 1),
+            (-1, -1),
+            (-1, 1),
+            (1, -1),
+            (1, 1),
+        ]
+        neighbors = []
+        for dr, dc in directions:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < grid.shape[0] and 0 <= nc < grid.shape[1]:
+                neighbors.append((nr, nc))
+        return neighbors
+
+    def expectimax(pos, dynamic_obstacles, depth, is_chance):
+        # Always combine static and dynamic obstacles
+        obstacles = static_obstacles | dynamic_obstacles
+        if depth == 0 or pos == target_pos:
+            return evaluation(pos)
+        if is_chance:
+            neighbors = get_neighbors(pos)
+            expected = 0
+            for n in neighbors:
+                new_dynamic = set(dynamic_obstacles)
+                if n in dynamic_obstacles:
+                    new_dynamic.remove(n)
+                else:
+                    new_dynamic.add(n)
+                expected += obstacle_prob * expectimax(
+                    pos, new_dynamic, depth - 1, False
+                )
+            expected += (1 - obstacle_prob * len(neighbors)) * expectimax(
+                pos, dynamic_obstacles, depth - 1, False
+            )
+            return expected
+        else:
+            best = float("-inf")
+            for n in get_neighbors(pos) + [pos]:
+                if n not in obstacles:
+                    val = expectimax(n, dynamic_obstacles, depth - 1, True)
+                    if val > best:
+                        best = val
+            return best
+
+    current_pos = agent_pos
+    current_dynamic_obstacles = set()  # Only random obstacles here
+    simulation_steps.append(
+        {
+            "step": 0,
+            "agents": [{"id": 1, "x": current_pos[0], "y": current_pos[1]}],
+            "obstacles": list(static_obstacles | current_dynamic_obstacles),
+            "paths": {},
+        }
+    )
+    while step_counter < max_steps and current_pos != target_pos:
+        obstacles = static_obstacles | current_dynamic_obstacles
+        best_val = float("-inf")
+        best_move = current_pos
+        for n in get_neighbors(current_pos) + [current_pos]:
+            if n not in obstacles:
+                val = expectimax(n, current_dynamic_obstacles, max_depth, True)
+                if val > best_val:
+                    best_val = val
+                    best_move = n
+        current_pos = best_move
+
+        # Simulate random obstacle appearance/disappearance (only for dynamic obstacles)
+        for n in get_neighbors(current_pos):
+            if n in static_obstacles:
+                continue  # Never change static obstacles
+            if random.random() < obstacle_prob:
+                if n in current_dynamic_obstacles:
+                    current_dynamic_obstacles.remove(n)
+                else:
+                    current_dynamic_obstacles.add(n)
+
+        simulation_steps.append(
+            {
+                "step": step_counter + 1,
+                "agents": [{"id": 1, "x": current_pos[0], "y": current_pos[1]}],
+                "obstacles": list(static_obstacles | current_dynamic_obstacles),
+                "paths": {},
+            }
+        )
+        step_counter += 1
+        if current_pos == target_pos:
+            break
+
+    return simulation_steps
+
+
+# ======================================================
+# minima with adversary inside its
+# ======================================================
+
+
+def move_agents_minimax_with_adversary(
+    grid,  # Pass the grid to get its shape
+    agent_positions,
+    target_positions,
+    obstacle_positions,
+    enemy_position,
+    max_depth=3,
+    history_length=4,  # How many past game states to remember
+):
+    if not agent_positions or not target_positions:
+        return [
+            {
+                "step": 0,
+                "agents": [],
+                "enemy": {},
+                "obstacles": list(obstacle_positions),
+                "paths": {},
+            }
+        ]
+
+    agent_pos = agent_positions[0]  # Assuming single agent
+    target_pos = target_positions[0]  # Assuming single target for this agent
+    grid_shape = grid.shape
+    simulation_steps = []
+    step_counter = 0
+    max_steps = 100  # Prevent infinite loops in edge cases
+
+    static_obstacles = set(obstacle_positions)
+
+    # --- Game State History ---
+    # Use a deque to store the last N (agent_pos, enemy_pos) tuples
+    game_state_history = deque(maxlen=history_length)
+
+    # --- Evaluation Function (Tuned) ---
+    def evaluation(agent, enemy, steps, target):
+        # Strong reward/penalty for terminal states
+        if agent == enemy:
+            return -10000  # Very bad if caught
+        if agent == target:
+            # Reward reaching target, slightly penalize taking more steps
+            return 10000 - steps * 5
+
+        # Heuristic: Distance to target is primary, distance from enemy secondary
+        target_dist = manhattan_dist(agent, target)
+        enemy_dist = manhattan_dist(agent, enemy)
+
+        # Ensure enemy_dist has less impact than target_dist
+        # Give a slight bonus for being further from the enemy, but prioritize target
+        # Penalize steps taken
+        score = -target_dist * 10 + enemy_dist * 2 - steps
+        return score
+
+    # --- Minimax Implementation ---
+    # visited_states_search: Prevents cycles *within* a single minimax call for a turn
+    visited_states_search = set()
+
+    def minimax(agent, enemy, depth, maximizing, alpha, beta, steps, current_target):
+        # Include depth and maximizing player in state to avoid issues in search tree
+        state = (agent, enemy, depth, maximizing)
+        if state in visited_states_search:
+            return -9999  # Penalize cycles within the search heavily
+
+        is_terminal = agent == current_target or agent == enemy
+        if depth == 0 or is_terminal:
+            return evaluation(agent, enemy, steps, current_target)
+
+        visited_states_search.add(state)
+        possible_agent_moves = get_neighbors(agent, grid_shape) + [agent]
+        possible_enemy_moves = get_neighbors(enemy, grid_shape) + [enemy]
+
+        if maximizing:  # Agent's turn within the simulation
+            max_eval = float("-inf")
+            for next_agent in possible_agent_moves:
+                # Agent cannot move into static obstacles or the enemy's current spot
+                if next_agent not in static_obstacles and next_agent != enemy:
+                    eval_score = minimax(
+                        next_agent,
+                        enemy,
+                        depth - 1,
+                        False,
+                        alpha,
+                        beta,
+                        steps + 1,
+                        current_target,
+                    )
+                    max_eval = max(max_eval, eval_score)
+                    alpha = max(alpha, eval_score)
+                    if beta <= alpha:
+                        break  # Beta cut-off
+            visited_states_search.remove(state)
+            return max_eval
+        else:  # Enemy's turn within the simulation
+            min_eval = float("inf")
+            for next_enemy in possible_enemy_moves:
+                # Enemy cannot move into static obstacles or the agent's current spot
+                if next_enemy not in static_obstacles and next_enemy != agent:
+                    eval_score = minimax(
+                        agent,
+                        next_enemy,
+                        depth - 1,
+                        True,
+                        alpha,
+                        beta,
+                        steps + 1,
+                        current_target,
+                    )
+                    min_eval = min(min_eval, eval_score)
+                    beta = min(beta, eval_score)
+                    if beta <= alpha:
+                        break  # Alpha cut-off
+            visited_states_search.remove(state)
+            return min_eval
+
+    # --- Main Simulation Loop ---
+    current_agent = agent_pos
+    current_enemy = enemy_position
+    game_state_history.append((current_agent, current_enemy))  # Initial state
+
+    simulation_steps.append(
+        {
+            "step": 0,
+            "agents": [{"id": 1, "x": current_agent[0], "y": current_agent[1]}],
+            "enemy": {"x": current_enemy[0], "y": current_enemy[1]},
+            "obstacles": list(static_obstacles),
+            "paths": {},
+        }
+    )
+
+    while (
+        step_counter < max_steps
+        and current_agent != target_pos
+        and current_agent != current_enemy
+    ):
+        step_counter += 1
+
+        # == Agent's Turn (Maximizer) ==
+        best_agent_val = float("-inf")
+        best_agent_move = current_agent  # Default to staying put if no better move
+        possible_agent_moves = get_neighbors(current_agent, grid_shape) + [
+            current_agent
+        ]
+        random.shuffle(possible_agent_moves)  # Randomize to break ties
+
+        for next_agent_move in possible_agent_moves:
+            # Basic Validity Check
+            if (
+                next_agent_move not in static_obstacles
+                and next_agent_move != current_enemy
+                and (
+                    next_agent_move == target_pos  # Allow moving to target
+                    or not is_adjacent(
+                        next_agent_move, current_enemy
+                    )  # Otherwise, must not be adjacent
+                )
+            ):
+                # Check History: Penalize returning to recent game states
+                potential_state = (next_agent_move, current_enemy)
+                history_penalty = 0
+                if potential_state in game_state_history:
+                    history_penalty = 500  # Apply a penalty for repeating
+
+                # Clear visited set for this specific move's search
+                visited_states_search.clear()
+                # Evaluate the move using minimax (Enemy will respond optimally)
+                val = minimax(
+                    next_agent_move,
+                    current_enemy,
+                    max_depth,
+                    False,
+                    float("-inf"),
+                    float("inf"),
+                    step_counter,
+                    target_pos,
+                )
+                val -= history_penalty  # Apply history penalty AFTER evaluation
+
+                if val > best_agent_val:
+                    best_agent_val = val
+                    best_agent_move = next_agent_move
+
+        current_agent = best_agent_move  # Update agent position
+
+        # Check if agent reached target or was caught after its move
+        if current_agent == target_pos or current_agent == current_enemy:
+            # Record this final state and break
+            game_state_history.append((current_agent, current_enemy))
+            simulation_steps.append(
+                {
+                    "step": step_counter,
+                    "agents": [{"id": 1, "x": current_agent[0], "y": current_agent[1]}],
+                    "enemy": {"x": current_enemy[0], "y": current_enemy[1]},
+                    "obstacles": list(static_obstacles),
+                    "paths": {},
+                }
+            )
+            break
+
+        # == Enemy's Turn (Minimizer) ==
+        best_enemy_val = float("inf")
+        best_enemy_move = current_enemy  # Default to staying put
+        possible_enemy_moves = get_neighbors(current_enemy, grid_shape) + [
+            current_enemy
+        ]
+        random.shuffle(possible_enemy_moves)  # Randomize to break ties
+
+        for next_enemy_move in possible_enemy_moves:
+            # Basic Validity Check
+            if (
+                next_enemy_move not in static_obstacles
+                and next_enemy_move != current_agent
+                and (
+                    next_enemy_move != target_pos or next_enemy_move == current_agent
+                )  # Only allow if catching agent
+            ):
+                # Check History: Penalize returning to recent game states
+                potential_state = (current_agent, next_enemy_move)
+                history_penalty = 0
+                # Note: Enemy "wants" low scores (bad for agent). Repeating a state might be
+                # tactically good for the enemy if it traps the agent, but generally bad strategy.
+                # We penalize it by ADDING to the score (making it seem worse for the enemy/better for agent)
+                if potential_state in game_state_history:
+                    history_penalty = (
+                        500  # Make repeating seem less attractive for the enemy
+                    )
+
+                # Clear visited set for this specific move's search
+                visited_states_search.clear()
+                # Evaluate the move using minimax (Agent will respond optimally)
+                val = minimax(
+                    current_agent,
+                    next_enemy_move,
+                    max_depth,
+                    True,
+                    float("-inf"),
+                    float("inf"),
+                    step_counter,
+                    target_pos,
+                )
+                val += history_penalty  # Apply history penalty
+
+                if val < best_enemy_val:
+                    best_enemy_val = val
+                    best_enemy_move = next_enemy_move
+
+        current_enemy = best_enemy_move  # Update enemy position
+
+        # --- Record State and Update History ---
+        game_state_history.append((current_agent, current_enemy))
+        simulation_steps.append(
+            {
+                "step": step_counter,
+                "agents": [{"id": 1, "x": current_agent[0], "y": current_agent[1]}],
+                "enemy": {"x": current_enemy[0], "y": current_enemy[1]},
+                "obstacles": list(static_obstacles),
+                "paths": {},
+            }
+        )
+
+        # Check if enemy caught agent after its move
+        if current_agent == current_enemy:
+            break  # End simulation
+
+    # Final message if loop finishes
+    if step_counter >= max_steps:
+        print("Minimax simulation reached max steps.")
+    elif current_agent == target_pos:
+        print("Minimax simulation: Agent reached target.")
+    elif current_agent == current_enemy:
+        print("Minimax simulation: Agent caught.")
 
     return simulation_steps
 
@@ -1873,10 +2428,49 @@ def run_simulation():
             simulation_steps = run_genetic_algorithm(
                 grid, agent_positions, target_positions, obstacle_positions
             )
+        elif algorithm == "minimax":
+            simulation_steps = move_agents_minimax(
+                grid, agent_positions, target_positions, obstacle_positions
+            )
         elif algorithm == "cellular-automata":
             simulation_steps = move_agents_cellular_automata(
                 grid, agent_positions, target_positions, obstacle_positions
             )
+            # ...existing code...
+        elif algorithm == "expectimax":
+            simulation_steps = move_agents_expectimax(
+                grid, agent_positions, target_positions, obstacle_positions
+            )
+        elif algorithm == "minimax-adv":
+            # Example: place enemy in the center of the grid
+            grid_height = grid.shape[0]
+            grid_width = grid.shape[1]
+            enemy_position = (grid_height // 2, grid_width // 2)
+            # Make sure enemy is not on an obstacle or agent
+            if (
+                enemy_position in obstacle_positions
+                or enemy_position in agent_positions
+            ):
+                # Pick first empty cell as fallback
+                for r in range(grid_height):
+                    for c in range(grid_width):
+                        if (r, c) not in obstacle_positions and (
+                            r,
+                            c,
+                        ) not in agent_positions:
+                            enemy_position = (r, c)
+                            break
+                    else:
+                        continue
+                    break
+            simulation_steps = move_agents_minimax_with_adversary(
+                grid,
+                agent_positions,
+                target_positions,
+                obstacle_positions,
+                enemy_position,
+            )
+        # ...existing code...
         else:  # Default to inside-out
             simulation_steps = move_agents_inside_out(
                 grid, agent_positions, target_positions, obstacle_positions

@@ -405,3 +405,20 @@
     overflow-y: auto;  /* Enable vertical scrolling */
     max-height: 100%;  /* Take full height of parent */
   }
+
+
+  /* Add to AgentShapeInterface.css */
+.cell-enemy {
+  background: #ff4444;
+  border: 2px solid #b71c1c;
+  position: relative;
+}
+.enemy-icon {
+  color: #fff;
+  font-weight: bold;
+  font-size: 1.2em;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
