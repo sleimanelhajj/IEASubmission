@@ -1623,32 +1623,6 @@ def run_genetic_algorithm(grid, agent_positions, target_positions, obstacle_posi
 # ======================================================
 # Cellular Automata
 # ======================================================
-def generate_targets(grid, axiom="F+F+F+F", steps=3):
-    """Generate targets with bounds checking"""
-    targets = set()
-    rows, cols = grid.shape
-    x, y = rows // 2, cols // 2  # Start at center
-    direction = (0, 1)
-    stack = []
-
-    for cmd in axiom:
-        if cmd == "F":
-            new_x = x + direction[0]
-            new_y = y + direction[1]
-            if 0 <= new_x < rows and 0 <= new_y < cols:
-                x, y = new_x, new_y
-                targets.add((x, y))
-        elif cmd == "+":
-            direction = (-direction[1], direction[0])  # 90° left
-        elif cmd == "-":
-            direction = (direction[1], -direction[0])  # 90° right
-        elif cmd == "[":
-            stack.append((x, y, direction))
-        elif cmd == "]":
-            if stack:
-                x, y, direction = stack.pop()
-    return targets
-
 
 def move_agents_cellular_automata(
     grid, agent_positions, target_positions, obstacle_positions
