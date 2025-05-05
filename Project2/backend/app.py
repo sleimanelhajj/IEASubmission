@@ -225,60 +225,6 @@ def hungarian_furthest_assignment(agent_positions, target_positions):
     return assignments
 
 
-def get_corners(target_positions):
-    """Return a set of corner positions from the target positions."""
-    rows = [r for r, _ in target_positions]
-    cols = [c for _, c in target_positions]
-    min_r, max_r = min(rows), max(rows)
-    min_c, max_c = min(cols), max(cols)
-    corners = set(
-        [
-            (min_r, min_c),
-            (min_r, max_c),
-            (max_r, min_c),
-            (max_r, max_c),
-        ]
-    )
-    # Only keep corners that are actually targets
-    return corners & set(target_positions)
-
-
-def hungarian_furthest_assignment_no_corner_priority(agent_positions, target_positions):
-    """
-    Assign each agent to the furthest available target from its own position using the Hungarian algorithm,
-    but assign corners last (lowest priority).
-    """
-    import numpy as np
-    from scipy.optimize import linear_sum_assignment
-
-    corners = get_corners(target_positions)
-    # Sort targets: non-corners first, then corners
-    sorted_targets = [t for t in target_positions if t not in corners] + [
-        t for t in target_positions if t in corners
-    ]
-
-    n_agents = len(agent_positions)
-    n_targets = len(sorted_targets)
-    size = max(n_agents, n_targets)
-    cost_matrix = np.zeros((size, size), dtype=int)
-    for i in range(size):
-        for j in range(size):
-            if i < n_agents and j < n_targets:
-                # Negative distance for maximization
-                cost_matrix[i, j] = -manhattan_dist(
-                    agent_positions[i], sorted_targets[j]
-                )
-            else:
-                cost_matrix[i, j] = 999999
-    row_ind, col_ind = linear_sum_assignment(cost_matrix)
-    assignments = []
-    for i in range(size):
-        if row_ind[i] < n_agents and col_ind[i] < n_targets:
-            assignments.append(
-                (agent_positions[row_ind[i]], sorted_targets[col_ind[i]])
-            )
-    return assignments
-
 
 def get_neighbors(pos, grid_shape):
     r, c = pos
@@ -297,40 +243,6 @@ def is_adjacent(pos1, pos2):
     """Returns True if pos1 is adjacent (including diagonals) to pos2."""
     return max(abs(pos1[0] - pos2[0]), abs(pos1[1] - pos2[1])) == 1
 
-
-def compute_gradient_field(grid, target_positions, obstacle_positions):
-    """
-    Returns a 2D numpy array where each cell contains the Manhattan distance to the nearest target,
-    or np.inf for obstacles.
-    """
-    import numpy as np
-    from collections import deque
-
-    rows, cols = grid.shape
-    gradient = np.full((rows, cols), np.inf)
-    visited = set(obstacle_positions)
-    queue = deque()
-
-    # Set targets to 0 and add to queue
-    for r, c in target_positions:
-        gradient[r, c] = 0
-        queue.append((r, c))
-
-    # BFS to fill gradient field
-    while queue:
-        r, c = queue.popleft()
-        for nr, nc in get_neighbors((r, c), grid.shape):
-            if (nr, nc) not in visited and gradient[nr, nc] > gradient[r, c] + 1:
-                gradient[nr, nc] = gradient[r, c] + 1
-                queue.append((nr, nc))
-                visited.add((nr, nc))
-    # Set obstacles to np.inf
-    for r, c in obstacle_positions:
-        gradient[r, c] = np.inf
-    return gradient
-
-
-# minmax integration
 
 # ======================================================
 # 1. Inside-Out Algorithm (from your original code)
@@ -865,6 +777,7 @@ def shift_shape_coords(shape, grid_dims):
     col_offset = (cols - shape_cols) // 2
 
     return [(r + row_offset, c + col_offset) for r, c in shape]
+
 
 
 # ======================================================

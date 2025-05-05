@@ -823,6 +823,11 @@ const AgentShapeInterface = () => {
                   const agent = agentPositions?.find(
                     (a) => a.x === rowIndex && a.y === colIndex
                   );
+                  const enemy =
+                    isSimulating &&
+                    simulationSteps[currentStep]?.enemy &&
+                    simulationSteps[currentStep].enemy.x === rowIndex &&
+                    simulationSteps[currentStep].enemy.y === colIndex;
                   const isTargetCell =
                     highlightTargets && cell.type === "shape" && isSimulating;
                   let cellClassName = "cell ";
@@ -832,6 +837,8 @@ const AgentShapeInterface = () => {
                     } else {
                       cellClassName += " cell-agent";
                     }
+                  } else if (enemy) {
+                    cellClassName += " cell-enemy";
                   } else if (cell.type === "shape") {
                     cellClassName += isTargetCell
                       ? "cell-target-highlight"
@@ -920,8 +927,8 @@ const AgentShapeInterface = () => {
                   <option value="cellular-automata">Cellular Automata</option>
                   <option value="minimax">Minimax</option>
                   <option value="expectimax">Expectimax</option>
-                  <option value="minimax-adv">Minimax-adc</option>
-                  <option value="minimax-adv-2">Minimax-adc-2</option>
+                  <option value="minimax-adv">Minimax-adv</option>
+                  <option value="minimax-adv-2">Minimax-adv-2</option>
                   <option value="qlearning">Q learning</option>
                   <option value="deep">deep learning</option>
                   <option value="stochastic">Stochastic</option>
