@@ -4,8 +4,8 @@ import numpy as np
 import time
 from collections import deque
 from scipy.optimize import linear_sum_assignment
+import heapq
 import random
-from scipy.optimize import linear_sum_assignment
 
 app = Flask(__name__)
 CORS(app)  # Enable cross-origin requests
@@ -91,6 +91,53 @@ def bfs_dynamic(start, goal, grid, agents, obstacles=None):
                     queue.append(((nr, nc), path + [(nr, nc)]))
     return []
 
+def astar(start, goal, grid, agents, obstacles=None):
+    """
+    A* pathfinding algorithm.
+    - start: (row, col)
+    - goal: (row, col)
+    - grid: numpy array
+    - agents: set of positions to treat as obstacles (other agents)
+    - obstacles: set of positions to treat as obstacles
+    Returns a list of steps from start->goal (excluding start, including goal).
+    If no path, returns [].
+    """
+    rows, cols = grid.shape
+    open_set = []
+    heapq.heappush(open_set, (0 + manhattan_dist(start, goal), 0, start, []))
+    closed_set = set()
+    if obstacles is None:
+        obstacles = set()
+
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+    while open_set:
+        f, g, current, path = heapq.heappop(open_set)
+        if current == goal:
+            return path
+        if current in closed_set:
+            continue
+        closed_set.add(current)
+        for dr, dc in directions:
+            nr, nc = current[0] + dr, current[1] + dc
+            neighbor = (nr, nc)
+            if (
+                0 <= nr < rows
+                and 0 <= nc < cols
+                and neighbor not in agents
+                and neighbor not in obstacles
+                and neighbor not in closed_set
+            ):
+                heapq.heappush(
+                    open_set,
+                    (
+                        g + 1 + manhattan_dist(neighbor, goal),
+                        g + 1,
+                        neighbor,
+                        path + [neighbor],
+                    ),
+                )
+    return []
 
 def hungarian_assignment(agent_positions, target_positions):
     """
@@ -523,211 +570,127 @@ def move_agents_inside_out(grid, agent_positions, target_positions, obstacle_pos
 # 2. Leader-Follower Algorithm
 # ======================================================
 
-
-def move_agents_leader_follower(
-    grid, agent_positions, target_positions, obstacle_positions
-):
+def move_agents_leader_follower(grid, agent_positions, target_positions, obstacle_positions):
     """
-    Leader-Follower movement approach adapted for the React frontend:
-    - The first agent (leader) moves towards its target
-    - Each follower moves step-by-step to the position previously occupied by the agent in front
-    - After leader reaches target, other agents navigate independently to their targets
+    Leader-Follower + Parallel movement for backend API.
+    Phase 1: Leader moves to highest-priority target, followers follow.
+    Phase 2: Remaining agents are assigned to remaining targets (Hungarian), move in parallel.
+    Returns a list of simulation steps for frontend animation.
     """
-    # Copy agent positions to avoid modifying the original list
-    current_positions = agent_positions.copy()
+    import numpy as np
 
-    # Assign targets to agents (leader gets the first target)
-    leader_pos = current_positions[0]
+    n = min(len(agent_positions), len(target_positions))
+    agent_positions = agent_positions[:n]
+    target_positions = target_positions[:n]
 
-    # Sort targets by distance from the leader
-    sorted_targets = sorted(
-        target_positions, key=lambda t: manhattan_dist(leader_pos, t)
+    # --- Phase 1: Leader-Follower to highest-priority target ---
+    agent_centroid = (
+        sum(pos[0] for pos in agent_positions) / len(agent_positions),
+        sum(pos[1] for pos in agent_positions) / len(agent_positions)
     )
+    def priority(t):
+        return abs(t[0] - agent_centroid[0]) + abs(t[1] - agent_centroid[1])
+    sorted_targets = sorted(target_positions, key=priority, reverse=True)
     leader_target = sorted_targets[0]
 
-    # Assign remaining targets using Hungarian algorithm
-    if len(current_positions) > 1 and len(target_positions) > 1:
-        follower_targets = hungarian_assignment(
-            current_positions[1:], [t for t in sorted_targets if t != leader_target]
-        )
-        follower_assignments = {agent: target for agent, target in follower_targets}
-    else:
-        follower_assignments = {}
-
-    # Find leader's path
-    leader_path = bfs_dynamic(
-        leader_pos, leader_target, grid, set(), obstacle_positions
-    )
-    if not leader_path:
-        # If no path found, return at least the initial state
-        initial_agents = []
-        for i, pos in enumerate(current_positions):
-            initial_agents.append({"id": i + 1, "x": pos[0], "y": pos[1]})
-        return [{"step": 0, "agents": initial_agents, "paths": {}}]
-
-    # Track position history for each agent
+    # Track agent positions by index
+    current_positions = agent_positions.copy()
     position_history = [[] for _ in range(len(current_positions))]
     for i, pos in enumerate(current_positions):
         position_history[i].append(pos)
 
-    # For React frontend - collect all steps
     simulation_steps = []
+    simulation_steps.append({
+        "step": 0,
+        "agents": [{"id": i + 1, "x": pos[0], "y": pos[1]} for i, pos in enumerate(current_positions)],
+        "paths": {},
+    })
 
-    # Add initial state
-    initial_agents = []
-    for i, pos in enumerate(current_positions):
-        initial_agents.append({"id": i + 1, "x": pos[0], "y": pos[1]})
-
-    # Create path visualization for the React frontend
-    path_visualization = {}
-
-    # Highlight leader's path
-    for cell in leader_path:
-        r, c = cell
-        if (r, c) != leader_pos and (r, c) != leader_target:  # Skip start and end
-            if r not in path_visualization:
-                path_visualization[r] = {}
-            path_visualization[r][c] = True
-
-    simulation_steps.append(
-        {"step": 0, "agents": initial_agents, "paths": path_visualization}
+    # Leader's path
+    leader_path = bfs_dynamic(
+        current_positions[0], leader_target, grid, set(current_positions[1:]), set(obstacle_positions)
     )
+    if not leader_path:
+        return simulation_steps
 
-    # Insert initial position at beginning of path for smooth movement
-    full_leader_path = [leader_pos] + leader_path
-
-    # -------- PHASE 1: LEADER MOVEMENT --------
-    # Leader movement phase - move leader step by step
+    # Move leader step by step, followers follow
+    full_leader_path = [current_positions[0]] + leader_path
     for step_idx in range(1, len(full_leader_path)):
-        # Move leader to next position in path
         current_positions[0] = full_leader_path[step_idx]
         position_history[0].append(current_positions[0])
 
-        # For each follower, calculate path to the previous position of the agent ahead
         for i in range(1, len(current_positions)):
-            # Get position of agent ahead from previous step
-            ahead_agent_previous_pos = position_history[i - 1][
-                -2
-            ]  # Position before its current one
-            current_pos = current_positions[i]
-
-            # If not already at that position, try to move one step toward it
-            if current_pos != ahead_agent_previous_pos:
-                # Build set of positions occupied by other agents
-                others = set()
-                for j, pos in enumerate(current_positions):
-                    if j != i:  # Skip self
-                        others.add(pos)
-
-                # Find path avoiding other agents and obstacles
-                mini_path = bfs_dynamic(
-                    current_pos,
-                    ahead_agent_previous_pos,
-                    grid,
-                    others,
-                    obstacle_positions,
-                )
-
-                if mini_path and len(mini_path) > 0:
-                    # Move just one step along the path
-                    current_positions[i] = mini_path[0]
-
-            # Record this position in history
+            ahead_prev_pos = position_history[i-1][-2]
+            curr_pos = current_positions[i]
+            if curr_pos != ahead_prev_pos:
+                others = set(current_positions)
+                others.remove(curr_pos)
+                path = bfs_dynamic(curr_pos, ahead_prev_pos, grid, others, set(obstacle_positions))
+                if path and path[0] not in others:
+                    current_positions[i] = path[0]
             position_history[i].append(current_positions[i])
 
-        # Create step data for React frontend
-        step_agents = []
-        for i, pos in enumerate(current_positions):
-            step_agents.append({"id": i + 1, "x": pos[0], "y": pos[1]})
+        simulation_steps.append({
+            "step": step_idx,
+            "agents": [{"id": i + 1, "x": pos[0], "y": pos[1]} for i, pos in enumerate(current_positions)],
+            "paths": {},
+        })
 
-        simulation_steps.append(
-            {"step": step_idx, "agents": step_agents, "paths": path_visualization}
-        )
+    # --- Phase 2: Parallel movement for remaining agents/targets ---
+    filled_targets = {leader_target}
+    remaining_targets = [t for t in sorted_targets if t not in filled_targets]
+    follower_indices = list(range(1, len(current_positions)))
+    followers = [current_positions[i] for i in follower_indices]
 
-    # -------- PHASE 2: FOLLOWER MOVEMENT --------
-    # After leader reaches target, followers navigate independently to their targets
+    # Hungarian assignment for remaining agents/targets
+    agents = []
+    if followers and remaining_targets:
+        follower_assignments = hungarian_assignment(followers, remaining_targets)
+        # Build a mapping from position to index for followers
+        pos_to_idx = {pos: idx for idx, pos in zip(follower_indices, followers)}
+        for agent_pos, target in follower_assignments:
+            agent_id = pos_to_idx[agent_pos]
+            agents.append({
+                "id": agent_id,
+                "pos": agent_pos,
+                "target": target
+            })
+
+    max_iterations = 200
     step_counter = len(full_leader_path)
-    max_steps = 100  # Limit total steps
-
-    # Create agent objects for independent movement
-    followers = []
-    for i in range(1, len(current_positions)):
-        target = None
-        pos = current_positions[i]
-        if pos in follower_assignments:
-            target = follower_assignments[pos]
-        else:
-            # Try to find a target if not assigned
-            for agent_pos, target_pos in follower_assignments.items():
-                if manhattan_dist(agent_pos, pos) < 3:  # Close enough
-                    target = target_pos
-                    break
-
-        if target is not None:
-            followers.append({"id": i, "pos": pos, "target": target})
-
-    # Continue until all followers reach targets or max steps
-    while step_counter < max_steps:
-        # Check if all followers reached targets
+    while step_counter < max_iterations and agents:
         all_reached = True
-        for follower in followers:
-            if follower["pos"] != follower["target"]:
-                all_reached = False
-                break
+        moves = {}
+        occupied = {current_positions[0]}  # Leader's position
 
+        for ag in agents:
+            if ag["pos"] == ag["target"]:
+                moves[ag["id"]] = ag["pos"]
+                occupied.add(ag["pos"])
+                continue
+            all_reached = False
+            others = occupied.copy()
+            path = bfs_dynamic(ag["pos"], ag["target"], grid, others, set(obstacle_positions))
+            if path and path[0] not in occupied:
+                moves[ag["id"]] = path[0]
+                occupied.add(path[0])
+            else:
+                moves[ag["id"]] = ag["pos"]
+                occupied.add(ag["pos"])
+
+        # Apply moves by agent index
+        for ag in agents:
+            ag["pos"] = moves[ag["id"]]
+            current_positions[ag["id"]] = ag["pos"]
+
+        simulation_steps.append({
+            "step": step_counter,
+            "agents": [{"id": i + 1, "x": pos[0], "y": pos[1]} for i, pos in enumerate(current_positions)],
+            "paths": {},
+        })
+        step_counter += 1
         if all_reached:
             break
-
-        # Move followers independently
-        agent_positions_set = {current_positions[0]}  # Leader position is fixed
-        moves = {}
-
-        for follower in followers:
-            current = follower["pos"]
-            target = follower["target"]
-
-            if current == target:
-                moves[current] = current
-                agent_positions_set.add(current)
-                continue
-
-            # Find path avoiding other agents and obstacles
-            others = agent_positions_set - {current}
-            path = bfs_dynamic(current, target, grid, others, obstacle_positions)
-
-            if path and len(path) > 0:
-                next_pos = path[0]
-                if next_pos not in agent_positions_set:
-                    moves[current] = next_pos
-                    agent_positions_set.add(next_pos)
-                else:
-                    # Collision - stay put
-                    moves[current] = current
-                    agent_positions_set.add(current)
-            else:
-                # No path - stay put
-                moves[current] = current
-                agent_positions_set.add(current)
-
-        # Update positions
-        for follower in followers:
-            old_pos = follower["pos"]
-            follower["pos"] = moves.get(old_pos, old_pos)
-
-        # Update current_positions
-        for i, follower in enumerate(followers, 1):
-            current_positions[i] = follower["pos"]
-
-        # Create step data for React frontend
-        step_agents = []
-        for i, pos in enumerate(current_positions):
-            step_agents.append({"id": i + 1, "x": pos[0], "y": pos[1]})
-
-        simulation_steps.append(
-            {"step": step_counter, "agents": step_agents, "paths": path_visualization}
-        )
-
-        step_counter += 1
 
     return simulation_steps
 
@@ -883,6 +846,80 @@ def move_agents_centralized(
 
     return simulation_steps
 
+def move_agents_astar(grid, agent_positions, target_positions, obstacle_positions):
+    """
+    Each agent moves to its assigned target using A* pathfinding.
+    Assigns agents to targets in order (agent i -> target i).
+    Returns step-by-step data for the React frontend.
+    """
+    agents = [{"id": i, "pos": agent_positions[i], "target": target_positions[i] if i < len(target_positions) else None} for i in range(len(agent_positions))]
+    simulation_steps = []
+    step_counter = 0
+    max_steps = 100
+
+    # Initial state
+    simulation_steps.append({
+        "step": 0,
+        "agents": [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents],
+        "paths": {},
+    })
+
+    while step_counter < max_steps:
+        all_reached = True
+        move_dict = {}
+        conflict_positions = set()
+        agent_positions_set = set(ag["pos"] for ag in agents)
+
+        for ag in agents:
+            current = ag["pos"]
+            target = ag["target"]
+            if target is None or current == target:
+                move_dict[current] = current
+                conflict_positions.add(current)
+                continue
+
+            all_reached = False
+            agent_set_except_self = agent_positions_set - {current}
+            path = astar(current, target, grid, agent_set_except_self, obstacle_positions)
+            if path:
+                next_step = path[0]
+                if next_step not in conflict_positions:
+                    move_dict[current] = next_step
+                    conflict_positions.add(next_step)
+                else:
+                    move_dict[current] = current
+                    conflict_positions.add(current)
+            else:
+                move_dict[current] = current
+                conflict_positions.add(current)
+
+        # Resolve direct swaps
+        final_moves = {}
+        for old_p, new_p in move_dict.items():
+            if new_p in move_dict and move_dict[new_p] == old_p and new_p != old_p:
+                final_moves[old_p] = old_p
+                final_moves[new_p] = new_p
+            else:
+                final_moves[old_p] = new_p
+
+        updated_agents = []
+        current_positions_next_step = set()
+        for ag in agents:
+            old_pos = ag["pos"]
+            new_pos = final_moves.get(old_pos, old_pos)
+            if new_pos in current_positions_next_step or new_pos in obstacle_positions:
+                new_pos = old_pos
+            current_positions_next_step.add(new_pos)
+            updated_agents.append({"id": ag["id"], "pos": new_pos, "target": ag["target"]})
+
+        agents = updated_agents
+        step_agents = [{"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]} for ag in agents]
+        simulation_steps.append({"step": step_counter + 1, "agents": step_agents, "paths": {}})
+        step_counter += 1
+        if all_reached:
+            break
+
+    return simulation_steps
 
 def shift_shape_coords(shape, grid_dims):
     """Center the shape in the grid"""
@@ -2079,6 +2116,293 @@ def move_agents_gradient_field(
 # gradient
 # ======================================================
 
+def move_agents_greedy(grid, agent_positions, target_positions, obstacle_positions, shape_type=None):
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
+
+    rows, cols = grid.shape
+    n_agents = len(agent_positions)
+    n_targets = len(target_positions)
+    n = min(n_agents, n_targets)
+    agent_positions = agent_positions[:n]
+    target_positions = target_positions[:n]
+
+    def manhattan_dist(a, b):
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    def prioritize_square_inner(target_positions, rows, cols):
+        center = (rows // 2, cols // 2)
+        return sorted(target_positions, key=lambda pos: manhattan_dist(pos, center))
+
+    if shape_type == "square":
+        target_positions = prioritize_square_inner(target_positions, rows, cols)
+
+    # Assign agents to targets ONCE at the start
+    cost_matrix = np.zeros((n, n))
+    for i, agent in enumerate(agent_positions):
+        for j, target in enumerate(target_positions):
+            cost_matrix[i, j] = manhattan_dist(agent, target)
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    assigned_targets = [target_positions[j] for i, j in sorted(zip(row_ind, col_ind))]
+
+    move_history = {}
+    simulation_steps = []
+    step_counter = 0
+    max_steps = 500
+    agent_positions = agent_positions.copy()
+
+    # Initial state
+    simulation_steps.append({
+        "step": 0,
+        "agents": [{"id": i + 1, "x": pos[0], "y": pos[1]} for i, pos in enumerate(agent_positions)],
+        "paths": {},
+    })
+
+    while step_counter < max_steps:
+        all_reached = True
+        any_moved = False
+
+        # Each agent moves toward its assigned target
+        proposed_moves = []
+        for i, agent in enumerate(agent_positions):
+            target = assigned_targets[i]
+            if agent == target:
+                proposed_moves.append(agent)
+                continue
+            all_reached = False
+            prev_move = move_history.get(i)
+            # Only consider up/down/left/right
+            possible_moves = [
+                (agent[0] + 1, agent[1]),  # Down
+                (agent[0] - 1, agent[1]),  # Up
+                (agent[0], agent[1] + 1),  # Right
+                (agent[0], agent[1] - 1),  # Left
+            ]
+            valid_moves = []
+            for move in possible_moves:
+                r, c = move
+                if (
+                    0 <= r < rows and 0 <= c < cols and
+                    move not in agent_positions and
+                    move not in obstacle_positions
+                ):
+                    score = manhattan_dist(move, target)
+                    if prev_move and move == (agent[0] - prev_move[0], agent[1] - prev_move[1]):
+                        score += 1
+                    valid_moves.append((move, score))
+            if valid_moves:
+                best_move = min(valid_moves, key=lambda x: x[1])[0]
+                proposed_moves.append(best_move)
+            else:
+                proposed_moves.append(agent)
+
+        # Resolve direct collisions: if two agents want the same cell, both stay
+        new_positions = agent_positions.copy()
+        move_counts = {}
+        for move in proposed_moves:
+            move_counts[move] = move_counts.get(move, 0) + 1
+
+        for i, move in enumerate(proposed_moves):
+            if move_counts[move] == 1:
+                new_positions[i] = move
+                if move != agent_positions[i]:
+                    move_history[i] = (move[0] - agent_positions[i][0], move[1] - agent_positions[i][1])
+                    any_moved = True
+            else:
+                new_positions[i] = agent_positions[i]  # Stay if conflict
+
+        agent_positions = new_positions
+
+        # Record step
+        simulation_steps.append({
+            "step": step_counter + 1,
+            "agents": [{"id": i + 1, "x": pos[0], "y": pos[1]} for i, pos in enumerate(agent_positions)],
+            "paths": {},
+        })
+
+        step_counter += 1
+        if all_reached or not any_moved:
+            break
+
+    return simulation_steps
+
+def move_agents_stochastic(grid, agent_positions, target_positions, obstacle_positions, shape_type=None):
+    """
+    Expectimax-inspired agent movement with soft lock: agents at their targets move aside (to any free cell) if needed.
+    If agents are stuck for too long, reshuffle all agents to random empty cells to break deadlock.
+    """
+    import numpy as np
+    import random
+    from scipy.optimize import linear_sum_assignment
+    from collections import deque
+
+    rows, cols = grid.shape
+    n_agents = len(agent_positions)
+    n_targets = len(target_positions)
+    n = min(n_agents, n_targets)
+    agent_positions = agent_positions[:n]
+    target_positions = target_positions[:n]
+
+    def manhattan_dist(a, b):
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    def is_valid_move(position, agent_positions):
+        r, c = position
+        return (0 <= r < rows and 0 <= c < cols and
+                position not in agent_positions and
+                position not in obstacle_positions)
+
+    def bfs_4dir(start, goal, grid, agents, obstacles):
+        queue = deque([(start, [])])
+        visited = {start}
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        while queue:
+            (r, c), path = queue.popleft()
+            if (r, c) == goal:
+                return path
+            for dr, dc in directions:
+                nr, nc = r + dr, c + dc
+                if (0 <= nr < rows and 0 <= nc < cols and
+                    (nr, nc) not in agents and
+                    (nr, nc) not in obstacles and
+                    (nr, nc) not in visited):
+                    visited.add((nr, nc))
+                    queue.append(((nr, nc), path + [(nr, nc)]))
+        return []
+
+    def bfs_to_any_free(start, grid, agents, obstacles):
+        """Find the shortest path from start to any free cell in the grid."""
+        queue = deque([(start, [])])
+        visited = {start}
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        while queue:
+            (r, c), path = queue.popleft()
+            if (grid[r, c] == 0 and (r, c) not in agents and (r, c) not in obstacles and (r, c) != start):
+                return path
+            for dr, dc in directions:
+                nr, nc = r + dr, c + dc
+                if (0 <= nr < rows and 0 <= nc < cols and
+                    (nr, nc) not in agents and
+                    (nr, nc) not in obstacles and
+                    (nr, nc) not in visited):
+                    visited.add((nr, nc))
+                    queue.append(((nr, nc), path + [(nr, nc)]))
+        return []
+
+    def assign_agents_to_targets(agent_positions, target_positions):
+        n_agents = len(agent_positions)
+        n_targets = len(target_positions)
+        n = min(n_agents, n_targets)
+        if n == 0:
+            return [None] * n_agents
+        cost_matrix = np.zeros((n_agents, n_targets))
+        for i, agent in enumerate(agent_positions):
+            for j, target in enumerate(target_positions):
+                cost_matrix[i, j] = manhattan_dist(agent, target)
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        assigned_targets = [None] * n_agents
+        for agent_idx, target_idx in zip(row_ind[:n], col_ind[:n]):
+            assigned_targets[agent_idx] = target_positions[target_idx]
+        return assigned_targets
+
+    simulation_steps = []
+    step_counter = 0
+    max_steps = 1000
+    move_history = {}
+    stuck_counter = 0
+    stuck_threshold = 50  # Number of steps to wait before reshuffling
+
+    # Initial state
+    simulation_steps.append({
+        "step": 0,
+        "agents": [{"id": i + 1, "x": pos[0], "y": pos[1]} for i, pos in enumerate(agent_positions)],
+        "paths": {},
+    })
+
+    while step_counter < max_steps:
+        all_reached = True
+        any_moved = False
+        agent_positions_set = set(agent_positions)
+        assigned_targets = assign_agents_to_targets(agent_positions, target_positions)
+        unsettled_indices = [i for i, pos in enumerate(agent_positions) if pos != assigned_targets[i]]
+        settled_indices = [i for i, pos in enumerate(agent_positions) if pos == assigned_targets[i]]
+
+        # 1. Move unsettled agents first (using BFS)
+        proposed_moves = [None] * len(agent_positions)
+        for i in unsettled_indices:
+            agent = agent_positions[i]
+            target = assigned_targets[i]
+            other_agents = agent_positions_set - {agent}
+            path = bfs_4dir(agent, target, grid, other_agents, set(obstacle_positions))
+            if path:
+                next_step = path[0]
+                proposed_moves[i] = next_step
+                all_reached = False
+            else:
+                proposed_moves[i] = agent
+                all_reached = False
+
+        # 2. Settled agents: stay unless someone else wants their spot, then try to move aside (BFS to any free cell)
+        for i in settled_indices:
+            agent = agent_positions[i]
+            if agent not in [proposed_moves[j] for j in unsettled_indices]:
+                proposed_moves[i] = agent
+            else:
+                other_agents = agent_positions_set - {agent}
+                path = bfs_to_any_free(agent, grid, other_agents, set(obstacle_positions))
+                if path:
+                    proposed_moves[i] = path[0]
+                else:
+                    proposed_moves[i] = agent
+
+        # 3. Priority tie-breaker for collisions
+        new_positions = agent_positions.copy()
+        move_counts = {}
+        for move in proposed_moves:
+            move_counts[move] = move_counts.get(move, 0) + 1
+        conflict_cells = {move for move, count in move_counts.items() if count > 1}
+        for i, move in enumerate(proposed_moves):
+            if move in conflict_cells:
+                first_agent = min(j for j, m in enumerate(proposed_moves) if m == move)
+                if i == first_agent:
+                    new_positions[i] = move
+                    if move != agent_positions[i]:
+                        any_moved = True
+                else:
+                    new_positions[i] = agent_positions[i]
+            else:
+                new_positions[i] = move
+                if move != agent_positions[i]:
+                    any_moved = True
+
+        if agent_positions == new_positions:
+            stuck_counter += 1
+        else:
+            stuck_counter = 0
+
+        agent_positions = new_positions
+
+        # If stuck for too long, reshuffle all agents randomly to break deadlock
+        if stuck_counter >= stuck_threshold:
+            empty_cells = [(r, c) for r in range(rows) for c in range(cols)
+                           if grid[r, c] == 0 and (r, c) not in obstacle_positions]
+            random.shuffle(empty_cells)
+            for i in range(len(agent_positions)):
+                if i < len(empty_cells):
+                    agent_positions[i] = empty_cells[i]
+            stuck_counter = 0  # Reset counter after reshuffle
+
+        simulation_steps.append({
+            "step": step_counter + 1,
+            "agents": [{"id": i + 1, "x": pos[0], "y": pos[1]} for i, pos in enumerate(agent_positions)],
+            "paths": {},
+        })
+
+        step_counter += 1
+        if all_reached or not any_moved:
+            break
+
+    return simulation_steps
 
 def move_agents_q_learning(
     grid,
@@ -2295,6 +2619,11 @@ def run_simulation():
             simulation_steps = move_agents_cellular_automata(
                 grid, agent_positions, target_positions, obstacle_positions
             )
+
+        elif algorithm == "stochastic":
+            simulation_steps = move_agents_stochastic(
+        grid, agent_positions, target_positions, obstacle_positions, config_data.get("shapeType")
+    )
             # ...existing code...
         elif algorithm == "expectimax":
             simulation_steps = move_agents_expectimax(
@@ -2338,6 +2667,20 @@ def run_simulation():
                 grid, agent_positions, target_positions, obstacle_positions
             )
             return jsonify(result)
+        
+        elif algorithm == "astar":
+             simulation_steps = move_agents_astar(
+                grid, agent_positions, target_positions, obstacle_positions
+            )
+        elif algorithm == "greedy-custom":
+              simulation_steps = move_agents_greedy(
+                grid, agent_positions, target_positions, obstacle_positions, config_data.get("shapeType")
+    )
+              
+        elif algorithm == "greedy-8dir":
+               simulation_steps = move_agents_greedy_8dir(
+               grid, agent_positions, target_positions, obstacle_positions, config_data.get("shapeType")
+    )
         
         else:  # Default to inside-out
             simulation_steps = move_agents_inside_out(
