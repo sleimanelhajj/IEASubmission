@@ -6,6 +6,11 @@ from collections import deque
 from scipy.optimize import linear_sum_assignment
 import random
 from scipy.optimize import linear_sum_assignment
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import random
 
 app = Flask(__name__)
 CORS(app)  # Enable cross-origin requests
@@ -2076,7 +2081,7 @@ def move_agents_gradient_field(
 
 
 # ======================================================
-# gradient
+# q-learning RL implementation based
 # ======================================================
 
 
@@ -2091,8 +2096,8 @@ def move_agents_q_learning(
     epsilon=0.3,
 ):
     """
-    Simple Q-learning for a single agent in the grid.
-    Shows the first episode (learning phase) as initial steps.
+    Q-learning for a single agent in the grid.
+    Returns all episodes (learning phase), exploitation phase, and Q-values.
     """
     rows, cols = grid.shape
     actions = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # up, down, left, right
@@ -2106,41 +2111,20 @@ def move_agents_q_learning(
         rewards[r, c] = -1
     rewards[target[0], target[1]] = 1
 
-    # --- Record the first episode for visualization ---
-    learning_steps = []
-    state = start
-    for step in range(100):
-        learning_steps.append(
-            {
-                "step": step,
-                "agents": [{"id": 1, "x": state[0], "y": state[1]}],
-                "phase": "learning",
-            }
-        )
-        if np.random.rand() < epsilon:
-            a = np.random.choice(action_indices)
-        else:
-            a = np.argmax(Q[state[0], state[1]])
-        dr, dc = actions[a]
-        nr, nc = state[0] + dr, state[1] + dc
-        if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in obstacle_positions:
-            next_state = (nr, nc)
-        else:
-            next_state = state
-        reward = rewards[next_state[0], next_state[1]]
-        Q[state[0], state[1], a] = Q[state[0], state[1], a] + alpha * (
-            reward
-            + gamma * np.max(Q[next_state[0], next_state[1]])
-            - Q[state[0], state[1], a]
-        )
-        state = next_state
-        if state == target or reward == -1:
-            break
-
-    # --- Continue training for remaining episodes (no need to record) ---
-    for ep in range(1, episodes):
+    # --- Collect all episodes ---
+    all_episodes = []
+    for ep in range(episodes):
         state = start
+        episode_steps = []
         for step in range(100):
+            episode_steps.append(
+                {
+                    "step": step,
+                    "agents": [{"id": 1, "x": state[0], "y": state[1]}],
+                    "phase": "learning",
+                    "episode": ep,
+                }
+            )
             if np.random.rand() < epsilon:
                 a = np.random.choice(action_indices)
             else:
@@ -2160,8 +2144,9 @@ def move_agents_q_learning(
             state = next_state
             if state == target or reward == -1:
                 break
+        all_episodes.append(episode_steps)
 
-    # --- After training, generate the optimal path ---
+    # --- After training, generate the optimal path (exploitation phase) ---
     state = start
     path = [state]
     for _ in range(100):
@@ -2177,27 +2162,146 @@ def move_agents_q_learning(
         if state == target:
             break
 
-    # --- Format for your frontend ---
-    simulation_steps = []
-    # Add learning phase steps first
-    simulation_steps.extend(learning_steps)
-    # Add optimal path steps (with phase "exploitation")
+    exploitation_steps = []
     for i, pos in enumerate(path):
-        simulation_steps.append(
+        exploitation_steps.append(
             {
-                "step": len(learning_steps) + i,
+                "step": i,
                 "agents": [{"id": 1, "x": pos[0], "y": pos[1]}],
                 "phase": "exploitation",
             }
         )
 
-        # --- Print Q-table summary for debugging ---
     max_q = np.max(Q, axis=2)
     simulation_result = {
-        "steps": simulation_steps,
-        "q_values": max_q.tolist(),  # Add this line
+        "episodes": all_episodes,  # All learning episodes
+        "exploitation": exploitation_steps,  # Final exploitation phase
+        "q_values": max_q.tolist(),
     }
     return simulation_result
+
+
+# ======================================================
+#
+# ======================================================
+
+
+class DQN(nn.Module):
+    def __init__(self, state_dim, action_dim):
+        super().__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(state_dim, 128), nn.ReLU(), nn.Linear(128, action_dim)
+        )
+
+    def forward(self, x):
+        return self.fc(x)
+
+
+def move_agents_deep_qlearning(
+    grid, agent_positions, target_positions, obstacle_positions, episodes=200
+):
+    print("Deep Q-Learning: Starting training...")
+    state_dim = 4  # (agent_row, agent_col, target_row, target_col)
+    action_dim = 4  # up, down, left, right
+    actions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    device = torch.device("cpu")
+
+    model = DQN(state_dim, action_dim).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    loss_fn = nn.MSELoss()
+    gamma = 0.95
+    epsilon = 0.2
+
+    target = target_positions[0]
+    start = agent_positions[0]
+
+    memory = []
+
+    for ep in range(episodes):
+        agent_pos = np.array(start)
+        for t in range(100):
+            state = np.array([agent_pos[0], agent_pos[1], target[0], target[1]])
+            state_tensor = torch.FloatTensor(state).to(device)
+            if random.random() < epsilon:
+                a = random.randint(0, action_dim - 1)
+            else:
+                with torch.no_grad():
+                    qvals = model(state_tensor)
+                    a = torch.argmax(qvals).item()
+            dr, dc = actions[a]
+            next_agent_pos = (agent_pos[0] + dr, agent_pos[1] + dc)
+            if (
+                0 <= next_agent_pos[0] < grid.shape[0]
+                and 0 <= next_agent_pos[1] < grid.shape[1]
+                and (next_agent_pos not in obstacle_positions)
+            ):
+                reward = 1 if next_agent_pos == target else -0.01
+            else:
+                next_agent_pos = tuple(agent_pos)
+                reward = -1
+            next_state = np.array(
+                [next_agent_pos[0], next_agent_pos[1], target[0], target[1]]
+            )
+            memory.append((state, a, reward, next_state))
+            if len(memory) > 32:
+                batch = random.sample(memory, 32)
+                states, actions_, rewards, next_states = zip(*batch)
+                states = torch.FloatTensor(np.array(states)).to(device)
+                actions_ = torch.LongTensor(actions_).to(device)
+                rewards = torch.FloatTensor(rewards).to(device)
+                next_states = torch.FloatTensor(np.array(next_states)).to(device)
+                qvals = model(states).gather(1, actions_.unsqueeze(1)).squeeze()
+                with torch.no_grad():
+                    next_qvals = model(next_states).max(1)[0]
+                targets = rewards + gamma * next_qvals
+                loss = loss_fn(qvals, targets)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+            agent_pos = np.array(next_agent_pos)
+            if tuple(agent_pos) == target or reward == -1:
+                break
+        if (ep + 1) % 50 == 0:
+            print(f"Episode {ep+1}/{episodes} completed.")
+
+    print("Deep Q-Learning: Training complete. Starting exploitation...")
+
+    # Exploitation: follow learned policy
+    agent_pos = np.array(start)
+    path = [tuple(agent_pos)]
+    for _ in range(100):
+        state = np.array([agent_pos[0], agent_pos[1], target[0], target[1]])
+        state_tensor = torch.FloatTensor(state).to(device)
+        with torch.no_grad():
+            qvals = model(state_tensor)
+            a = torch.argmax(qvals).item()
+        dr, dc = actions[a]
+        next_agent_pos = (agent_pos[0] + dr, agent_pos[1] + dc)
+        if (
+            0 <= next_agent_pos[0] < grid.shape[0]
+            and 0 <= next_agent_pos[1] < grid.shape[1]
+            and (next_agent_pos not in obstacle_positions)
+        ):
+            agent_pos = np.array(next_agent_pos)
+        else:
+            break
+        path.append(tuple(agent_pos))
+        if tuple(agent_pos) == target:
+            break
+
+    print(f"Deep Q-Learning: Exploitation path length: {len(path)}")
+
+    exploitation_steps = []
+    for i, pos in enumerate(path):
+        exploitation_steps.append(
+            {
+                "step": int(i),
+                "agents": [{"id": 1, "x": int(pos[0]), "y": int(pos[1])}],
+                "phase": "deep-exploitation",
+            }
+        )
+    print("Deep Q-Learning: Returning exploitation steps to frontend.")
+    return {"exploitation": exploitation_steps}
 
 
 # ======================================================
@@ -2274,6 +2378,18 @@ def run_simulation():
         # Determine which algorithm to use
         algorithm = config_data.get("algorithm", "inside-out")
 
+        # Set the target to the center ONLY for deep learning
+        if algorithm == "deep":
+            grid_height = len(grid_data)
+            grid_width = len(grid_data[0])
+            center_r = grid_height // 2
+            center_c = grid_width // 2
+            target_positions = [(center_r, center_c)]
+            result = move_agents_deep_qlearning(
+                grid, agent_positions, target_positions, obstacle_positions
+            )
+            return jsonify({"steps": result["exploitation"]})
+
         # Generate simulation steps using the selected algorithm
         if algorithm == "leader-follower":
             simulation_steps = move_agents_leader_follower(
@@ -2300,6 +2416,13 @@ def run_simulation():
             simulation_steps = move_agents_expectimax(
                 grid, agent_positions, target_positions, obstacle_positions
             )
+            # ...existing code...
+        elif algorithm == "deep":
+            result = move_agents_deep_qlearning(
+                grid, agent_positions, target_positions, obstacle_positions
+            )
+            return jsonify({"steps": result["exploitation"]})
+        # ...existing code...
         elif algorithm == "minimax-adv":
             # Example: place enemy in the center of the grid
             grid_height = grid.shape[0]
@@ -2338,7 +2461,7 @@ def run_simulation():
                 grid, agent_positions, target_positions, obstacle_positions
             )
             return jsonify(result)
-        
+
         else:  # Default to inside-out
             simulation_steps = move_agents_inside_out(
                 grid, agent_positions, target_positions, obstacle_positions

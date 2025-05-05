@@ -3,42 +3,48 @@ import "./AgentShapeInterface.css";
 
 const AgentShapeInterface = () => {
   // Main state variables
-  const [mode, setMode] = useState("selection"); // 'selection', 'predefined', 'custom'
+  const [mode, setMode] = useState("selection");
   const [selectedPredefinedShape, setSelectedPredefinedShape] = useState(null);
-  const [placementMode, setPlacementMode] = useState("none"); // 'none', 'obstacle', 'shape'
+  const [placementMode, setPlacementMode] = useState("none");
   const [gridSize, setGridSize] = useState(15);
   const [grid, setGrid] = useState([]);
   const [message, setMessage] = useState("Select a mode to begin");
-  //
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [lastCellInteracted, setLastCellInteracted] = useState(null);
-  const [dragMode, setDragMode] = useState(null); // 'select' or 'unselect'
+  const [dragMode, setDragMode] = useState(null);
 
   // Backend configuration options
-  const [algorithm, setAlgorithm] = useState("inside-out"); // 'inside-out', 'leader-follower', 'centralized'
+  const [algorithm, setAlgorithm] = useState("inside-out");
   const [agentTopology, setAgentTopology] = useState("8-directional");
   const [agentCount, setAgentCount] = useState(5);
   const [agentSpeed, setAgentSpeed] = useState("medium");
 
   // Simulation state
   const [isSimulating, setIsSimulating] = useState(false);
-  const [simulationSteps, setSimulationSteps] = useState([]);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [agentPositions, setAgentPositions] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showQValues, setShowQValues] = useState(false);
   const [showAgentIds, setShowAgentIds] = useState(true);
   const [showPathFinding, setShowPathFinding] = useState(true);
   const [highlightTargets, setHighlightTargets] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
-  const [showQValues, setShowQValues] = useState(false); // Add showQValues state
-  const [isPlaying, setIsPlaying] = useState(false);
+
+  // Q-learning episode/step state
+  const [allEpisodes, setAllEpisodes] = useState([]);
+  const [exploitationSteps, setExploitationSteps] = useState([]);
+  const [currentEpisode, setCurrentEpisode] = useState(0);
+  const [currentEpisodeStep, setCurrentEpisodeStep] = useState(0);
+  const [playbackTimeout, setPlaybackTimeout] = useState(null);
+
+  // Classic (non-Q) simulation state
+  const [simulationSteps, setSimulationSteps] = useState([]);
+  const [currentStep, setCurrentStep] = useState(0);
   const [playbackIntervalId, setPlaybackIntervalId] = useState(null);
+
+  // Shared
+  const [isPlaying, setIsPlaying] = useState(false);
   const [qValues, setQValues] = useState([]);
+  const [agentPositions, setAgentPositions] = useState([]);
 
-  // adding state for obstacles (obstacle detection code)
-  const [obstacles, setObstacles] = useState([]);
-  const [isObstacleDetected, setIsObstacleDetected] = useState(false);
-
-  // Initialize grid
+  // Grid initialization
   useEffect(() => {
     const newGrid = Array(gridSize)
       .fill()
@@ -50,29 +56,52 @@ const AgentShapeInterface = () => {
     setGrid(newGrid);
   }, [gridSize]);
 
-  // Update agent positions when currentStep changes
+  // Update agent positions for current step/episode
   useEffect(() => {
-    if (simulationSteps.length > 0 && currentStep < simulationSteps.length) {
-      setAgentPositions(simulationSteps[currentStep].agents);
+    if (algorithm === "qlearning") {
+      if (
+        allEpisodes.length > 0 &&
+        currentEpisode < allEpisodes.length &&
+        currentEpisodeStep < (allEpisodes[currentEpisode]?.length || 0)
+      ) {
+        setAgentPositions(
+          allEpisodes[currentEpisode][currentEpisodeStep].agents
+        );
+      } else if (
+        allEpisodes.length > 0 &&
+        currentEpisode === allEpisodes.length &&
+        currentEpisodeStep < exploitationSteps.length
+      ) {
+        setAgentPositions(exploitationSteps[currentEpisodeStep].agents);
+      } else {
+        setAgentPositions([]);
+      }
+    } else {
+      if (simulationSteps.length > 0 && currentStep < simulationSteps.length) {
+        setAgentPositions(simulationSteps[currentStep].agents);
+      } else {
+        setAgentPositions([]);
+      }
     }
-  }, [currentStep, simulationSteps]);
+  }, [
+    algorithm,
+    allEpisodes,
+    exploitationSteps,
+    currentEpisode,
+    currentEpisodeStep,
+    simulationSteps,
+    currentStep,
+  ]);
 
-  //
-  // Add cleanup useEffect to remove the mouse event listeners
+  // Mouse up cleanup
   useEffect(() => {
-    // Add global mouse up handler to catch mouse up events outside the grid
     const handleGlobalMouseUp = () => {
       setIsMouseDown(false);
       setLastCellInteracted(null);
       setDragMode(null);
     };
-
     window.addEventListener("mouseup", handleGlobalMouseUp);
-
-    // Clean up
-    return () => {
-      window.removeEventListener("mouseup", handleGlobalMouseUp);
-    };
+    return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
   }, []);
 
   // Predefined shapes
@@ -123,8 +152,6 @@ const AgentShapeInterface = () => {
     const newGrid = [
       ...grid.map((row) => [...row.map((cell) => ({ ...cell }))]),
     ];
-
-    // Clear any previous shapes
     for (let i = 0; i < gridSize; i++) {
       for (let j = 0; j < gridSize; j++) {
         if (newGrid[i][j].type === "shape") {
@@ -132,11 +159,7 @@ const AgentShapeInterface = () => {
         }
       }
     }
-
-    // Center offset for the shape
     const centerOffset = Math.floor(gridSize / 2) - 2;
-
-    // Apply the selected shape and count shape cells
     let shapeCellCount = 0;
     predefinedShapes[shape].forEach(([x, y]) => {
       const newX = x + centerOffset;
@@ -146,89 +169,13 @@ const AgentShapeInterface = () => {
         shapeCellCount++;
       }
     });
-
     setGrid(newGrid);
-
-    // Update agent count to match shape cell count
     setAgentCount(shapeCellCount);
-
     setMessage(
       `${
         shape.charAt(0).toUpperCase() + shape.slice(1)
       } shape placed with ${shapeCellCount} agents. You can now add obstacles.`
     );
-  };
-  const countShapeCells = (grid) => {
-    let count = 0;
-    for (let i = 0; i < grid.length; i++) {
-      for (let j = 0; j < grid[i].length; j++) {
-        if (grid[i][j].type === "shape") {
-          count++;
-        }
-      }
-    }
-    return count;
-  };
-
-  // Handle cell click
-  const handleCellClick = (row, col) => {
-    // Don't allow changes during simulation
-    if (isSimulating) return;
-
-    const newGrid = [...grid.map((r) => [...r.map((cell) => ({ ...cell }))])];
-
-    if (mode === "predefined") {
-      if (placementMode === "obstacle") {
-        // Can't place obstacles on shape cells
-        if (newGrid[row][col].type === "shape") {
-          setMessage("Cannot place obstacles on shape cells!");
-          return;
-        }
-
-        // Toggle obstacle
-        if (newGrid[row][col].type === "obstacle") {
-          newGrid[row][col].type = "empty";
-          setMessage("Obstacle removed");
-        } else {
-          newGrid[row][col].type = "obstacle";
-          setMessage("Obstacle placed");
-        }
-      }
-    } else if (mode === "custom") {
-      if (placementMode === "shape") {
-        if (newGrid[row][col].type === "shape") {
-          // Shape block being removed
-          newGrid[row][col].type = "empty";
-          setMessage("Shape block removed");
-          setAgentCount((prevCount) => Math.max(0, prevCount - 1));
-        } else if (newGrid[row][col].type === "obstacle") {
-          setMessage("Cannot place shape on obstacles!");
-          return;
-        } else {
-          // Shape block being added
-          newGrid[row][col].type = "shape";
-          setMessage("Shape block placed");
-          setAgentCount((prevCount) => prevCount + 1);
-        }
-      } else if (placementMode === "obstacle") {
-        // Can't place obstacles on shape cells
-        if (newGrid[row][col].type === "shape") {
-          setMessage("Cannot place obstacles on shape cells!");
-          return;
-        }
-
-        // Toggle obstacle
-        if (newGrid[row][col].type === "obstacle") {
-          newGrid[row][col].type = "empty";
-          setMessage("Obstacle removed");
-        } else {
-          newGrid[row][col].type = "obstacle";
-          setMessage("Obstacle placed");
-        }
-      }
-    }
-
-    setGrid(newGrid);
   };
 
   // Reset grid
@@ -244,24 +191,22 @@ const AgentShapeInterface = () => {
     setSelectedPredefinedShape(null);
     setPlacementMode("none");
     setMessage("Grid reset");
-
-    // Reset agent count to default
     setAgentCount(1);
-
-    // Reset simulation state
     setIsSimulating(false);
+    setAllEpisodes([]);
+    setExploitationSteps([]);
+    setCurrentEpisode(0);
+    setCurrentEpisodeStep(0);
     setSimulationSteps([]);
     setCurrentStep(0);
     setAgentPositions([]);
+    setQValues([]);
   };
 
   // Change mode
   const changeMode = (newMode) => {
     setMode(newMode);
     resetGrid();
-
-    // add new placement mode for the other options
-
     if (newMode === "selection") {
       setMessage("Select a mode to begin");
     } else if (newMode === "predefined") {
@@ -274,21 +219,17 @@ const AgentShapeInterface = () => {
 
   // Run simulation (connecting to Python backend)
   const runSimulation = async () => {
-    // Check if a shape exists
     const hasShape = grid.some((row) =>
       row.some((cell) => cell.type === "shape")
     );
-
     if (!hasShape) {
       setMessage("Error: No shape defined. Please create a shape first.");
       return;
     }
-
     setMessage("Sending data to backend for processing...");
     setIsSimulating(true);
     setIsLoading(true);
 
-    // Collect the grid data to send to the Python backend
     const gridData = grid.map((row) =>
       row.map((cell) => {
         if (cell.type === "empty") return 0;
@@ -297,8 +238,6 @@ const AgentShapeInterface = () => {
         return 0;
       })
     );
-
-    // Prepare configuration data to send to the backend
     const configData = {
       algorithm,
       agentTopology,
@@ -309,28 +248,34 @@ const AgentShapeInterface = () => {
     };
 
     try {
-      // Send data to Python backend
       const response = await fetch("http://localhost:8000/run_simulation", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gridData, configData }),
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`HTTP error ${response.status}`);
       const result = await response.json();
-      setSimulationSteps(result.steps);
-      setQValues(result.q_values || []); // Store Q-values if available
-      setCurrentStep(0);
-      setMessage(
-        "Simulation received! Press play to view the agent movements."
-      );
+
+      if (algorithm === "qlearning") {
+        setAllEpisodes(result.episodes || []);
+        setExploitationSteps(result.exploitation || []);
+        setQValues(result.q_values || []);
+        setCurrentEpisode(0);
+        setCurrentEpisodeStep(0);
+        setSimulationSteps([]);
+        setCurrentStep(0);
+        setMessage("Simulation received! Showing learning episodes...");
+      } else {
+        setSimulationSteps(result.steps || []);
+        setCurrentStep(0);
+        setAllEpisodes([]);
+        setExploitationSteps([]);
+        setCurrentEpisode(0);
+        setCurrentEpisodeStep(0);
+        setQValues([]);
+        setMessage("Simulation received! Showing steps...");
+      }
     } catch (error) {
-      console.error("Error during simulation:", error);
       setMessage(`Error: ${error.message}. Is the Python backend running?`);
       setIsSimulating(false);
     } finally {
@@ -338,61 +283,129 @@ const AgentShapeInterface = () => {
     }
   };
 
-  // Play the simulation animation
+  // Play simulation (Q-learning or classic)
   const playSimulation = () => {
-    if (simulationSteps.length === 0) return;
+    if (algorithm === "qlearning") {
+      if (allEpisodes.length === 0) return;
+      if (isPlaying) return;
+      setIsPlaying(true);
 
-    // If already playing, do nothing
-    if (isPlaying) return;
+      let ep = currentEpisode;
+      let st = currentEpisodeStep;
+      const speed =
+        agentSpeed === "slow" ? 1000 : agentSpeed === "medium" ? 500 : 50;
 
-    setIsPlaying(true);
-    setCurrentStep((prev) => (prev === simulationSteps.length - 1 ? 0 : prev));
-    const speed =
-      agentSpeed === "slow" ? 1000 : agentSpeed === "medium" ? 500 : 200;
-
-    const intervalId = setInterval(() => {
-      setCurrentStep((prevStep) => {
-        if (prevStep < simulationSteps.length - 1) {
-          return prevStep + 1;
+      const playNext = () => {
+        if (ep < allEpisodes.length) {
+          if (st < allEpisodes[ep].length - 1) {
+            setCurrentEpisode(ep);
+            setCurrentEpisodeStep(++st);
+            setPlaybackTimeout(setTimeout(playNext, speed));
+          } else {
+            ep++;
+            st = 0;
+            setCurrentEpisode(ep);
+            setCurrentEpisodeStep(st);
+            setPlaybackTimeout(setTimeout(playNext, speed));
+          }
+        } else if (
+          ep === allEpisodes.length &&
+          st < exploitationSteps.length - 1
+        ) {
+          setCurrentEpisode(ep);
+          setCurrentEpisodeStep(++st);
+          setPlaybackTimeout(setTimeout(playNext, speed));
         } else {
-          // Stop playing when we reach the end
-          clearInterval(intervalId);
           setIsPlaying(false);
-          setPlaybackIntervalId(null);
           setMessage("Simulation complete!");
-          return prevStep;
         }
-      });
-    }, speed);
+      };
 
-    setPlaybackIntervalId(intervalId);
+      playNext();
+    } else {
+      if (simulationSteps.length === 0) return;
+      if (isPlaying) return;
+      setIsPlaying(true);
+      setCurrentStep((prev) =>
+        prev === simulationSteps.length - 1 ? 0 : prev
+      );
+      const speed =
+        agentSpeed === "slow" ? 1000 : agentSpeed === "medium" ? 500 : 50;
+
+      const intervalId = setInterval(() => {
+        setCurrentStep((prevStep) => {
+          if (prevStep < simulationSteps.length - 1) {
+            return prevStep + 1;
+          } else {
+            clearInterval(intervalId);
+            setIsPlaying(false);
+            setPlaybackIntervalId(null);
+            setMessage("Simulation complete!");
+            return prevStep;
+          }
+        });
+      }, speed);
+
+      setPlaybackIntervalId(intervalId);
+    }
   };
 
-  //pause the simulation
+  // Pause simulation
   const pauseSimulation = () => {
-    if (playbackIntervalId) {
-      clearInterval(playbackIntervalId);
-      setPlaybackIntervalId(null);
-      setIsPlaying(false);
-      setMessage("Simulation paused");
+    if (algorithm === "qlearning") {
+      if (playbackTimeout) {
+        clearTimeout(playbackTimeout);
+        setPlaybackTimeout(null);
+        setIsPlaying(false);
+        setMessage("Simulation paused");
+      }
+    } else {
+      if (playbackIntervalId) {
+        clearInterval(playbackIntervalId);
+        setPlaybackIntervalId(null);
+        setIsPlaying(false);
+        setMessage("Simulation paused");
+      }
     }
   };
 
-  // Stop the simulation and return to editing
+  // Stop simulation and return to editing
   const stopSimulation = () => {
-    if (playbackIntervalId) {
-      clearInterval(playbackIntervalId);
-      setPlaybackIntervalId(null);
+    if (algorithm === "qlearning") {
+      if (playbackTimeout) {
+        clearTimeout(playbackTimeout);
+        setPlaybackTimeout(null);
+      }
+      setIsPlaying(false);
+      setIsSimulating(false);
+      setAllEpisodes([]);
+      setExploitationSteps([]);
+      setCurrentEpisode(0);
+      setCurrentEpisodeStep(0);
+      setAgentPositions([]);
+      setQValues([]);
+      setSimulationSteps([]);
+      setCurrentStep(0);
+    } else {
+      if (playbackIntervalId) {
+        clearInterval(playbackIntervalId);
+        setPlaybackIntervalId(null);
+      }
+      setIsPlaying(false);
+      setIsSimulating(false);
+      setSimulationSteps([]);
+      setCurrentStep(0);
+      setAgentPositions([]);
+      setQValues([]);
+      setAllEpisodes([]);
+      setExploitationSteps([]);
+      setCurrentEpisode(0);
+      setCurrentEpisodeStep(0);
     }
-    setIsPlaying(false);
-    setIsSimulating(false);
-    setSimulationSteps([]);
-    setCurrentStep(0);
-    setAgentPositions([]);
     setMessage("Simulation stopped. You can modify the grid now.");
   };
 
-  // Get algorithm description
+  // Algorithm description
   const getAlgorithmDescription = () => {
     switch (algorithm) {
       case "inside-out":
@@ -408,34 +421,19 @@ const AgentShapeInterface = () => {
     }
   };
 
-  //////////////////
-  //// Mouse click and drag event handling
+  // Mouse click and drag event handling
   const handleMouseDown = (row, col) => {
     if (isSimulating) return;
-
     setIsMouseDown(true);
     setLastCellInteracted({ row, col });
-
-    // Determine drag mode based on initial cell state
     const cellType = grid[row][col].type;
-
     if (mode === "custom" && placementMode === "shape") {
-      // For shape placement
-      if (cellType === "shape") {
-        setDragMode("unselect"); // First cell is already a shape, so we'll unselect
-      } else if (cellType === "empty") {
-        setDragMode("select"); // First cell is empty, so we'll select
-      }
+      if (cellType === "shape") setDragMode("unselect");
+      else if (cellType === "empty") setDragMode("select");
     } else if (placementMode === "obstacle") {
-      // For obstacle placement
-      if (cellType === "obstacle") {
-        setDragMode("unselect"); // First cell is already an obstacle, so we'll unselect
-      } else if (cellType === "empty") {
-        setDragMode("select"); // First cell is empty, so we'll select
-      }
+      if (cellType === "obstacle") setDragMode("unselect");
+      else if (cellType === "empty") setDragMode("select");
     }
-
-    // Process the initial cell click
     handleCellInteraction(row, col);
   };
 
@@ -447,8 +445,6 @@ const AgentShapeInterface = () => {
 
   const handleMouseEnter = (row, col) => {
     if (isSimulating) return;
-
-    // Only process if mouse is down (dragging) and this is a new cell
     if (
       isMouseDown &&
       dragMode !== null &&
@@ -464,22 +460,15 @@ const AgentShapeInterface = () => {
   // Common function to handle cell interactions (both clicks and drags)
   const handleCellInteraction = (row, col) => {
     const newGrid = [...grid.map((r) => [...r.map((cell) => ({ ...cell }))])];
-
     if (mode === "predefined") {
       if (placementMode === "obstacle") {
-        // Can't place obstacles on shape cells
-        if (newGrid[row][col].type === "shape") {
-          return;
-        }
-
+        if (newGrid[row][col].type === "shape") return;
         if (dragMode === "select") {
-          // Set to obstacle
           if (newGrid[row][col].type !== "obstacle") {
             newGrid[row][col].type = "obstacle";
             setMessage("Obstacle placed");
           }
         } else if (dragMode === "unselect") {
-          // Remove obstacle
           if (newGrid[row][col].type === "obstacle") {
             newGrid[row][col].type = "empty";
             setMessage("Obstacle removed");
@@ -488,20 +477,14 @@ const AgentShapeInterface = () => {
       }
     } else if (mode === "custom") {
       if (placementMode === "shape") {
-        // Can't place shape on obstacles
-        if (newGrid[row][col].type === "obstacle") {
-          return;
-        }
-
+        if (newGrid[row][col].type === "obstacle") return;
         if (dragMode === "select") {
-          // Set to shape
           if (newGrid[row][col].type !== "shape") {
             newGrid[row][col].type = "shape";
             setMessage("Shape block placed");
             setAgentCount((prevCount) => prevCount + 1);
           }
         } else if (dragMode === "unselect") {
-          // Remove shape
           if (newGrid[row][col].type === "shape") {
             newGrid[row][col].type = "empty";
             setMessage("Shape block removed");
@@ -509,19 +492,13 @@ const AgentShapeInterface = () => {
           }
         }
       } else if (placementMode === "obstacle") {
-        // Can't place obstacles on shape cells
-        if (newGrid[row][col].type === "shape") {
-          return;
-        }
-
+        if (newGrid[row][col].type === "shape") return;
         if (dragMode === "select") {
-          // Set to obstacle
           if (newGrid[row][col].type !== "obstacle") {
             newGrid[row][col].type = "obstacle";
             setMessage("Obstacle placed");
           }
         } else if (dragMode === "unselect") {
-          // Remove obstacle
           if (newGrid[row][col].type === "obstacle") {
             newGrid[row][col].type = "empty";
             setMessage("Obstacle removed");
@@ -529,56 +506,165 @@ const AgentShapeInterface = () => {
         }
       }
     }
-
     setGrid(newGrid);
   };
 
+  // Episode controls UI (Q-learning)
+  const episodeControls = algorithm === "qlearning" &&
+    isSimulating &&
+    allEpisodes.length > 0 && (
+      <div className="episode-controls" style={{ margin: "10px 0" }}>
+        <label>Episode:</label>
+        <input
+          type="number"
+          min={0}
+          max={allEpisodes.length}
+          value={currentEpisode}
+          onChange={(e) => {
+            let val = Number(e.target.value);
+            if (val > allEpisodes.length) val = allEpisodes.length;
+            setCurrentEpisode(val);
+            setCurrentEpisodeStep(0);
+          }}
+          disabled={isPlaying}
+          style={{ width: 60, marginLeft: 5, marginRight: 10 }}
+        />
+        <span>
+          {currentEpisode < allEpisodes.length
+            ? `Step ${currentEpisodeStep + 1} of ${
+                allEpisodes[currentEpisode]?.length || 0
+              }`
+            : `Exploitation Step ${currentEpisodeStep + 1} of ${
+                exploitationSteps.length
+              }`}
+        </span>
+        <button
+          onClick={() =>
+            setCurrentEpisodeStep(Math.max(0, currentEpisodeStep - 1))
+          }
+          disabled={currentEpisodeStep === 0 || isPlaying}
+          style={{ marginLeft: 10 }}
+        >
+          Prev Step
+        </button>
+        <button
+          onClick={() => {
+            if (currentEpisode < allEpisodes.length) {
+              setCurrentEpisodeStep(
+                Math.min(
+                  allEpisodes[currentEpisode].length - 1,
+                  currentEpisodeStep + 1
+                )
+              );
+            } else {
+              setCurrentEpisodeStep(
+                Math.min(exploitationSteps.length - 1, currentEpisodeStep + 1)
+              );
+            }
+          }}
+          disabled={
+            (currentEpisode < allEpisodes.length &&
+              currentEpisodeStep ===
+                (allEpisodes[currentEpisode]?.length || 1) - 1) ||
+            (currentEpisode === allEpisodes.length &&
+              currentEpisodeStep === exploitationSteps.length - 1) ||
+            isPlaying
+          }
+        >
+          Next Step
+        </button>
+        <button
+          onClick={() => {
+            if (currentEpisode < allEpisodes.length) {
+              setCurrentEpisode(
+                Math.min(allEpisodes.length, currentEpisode + 1)
+              );
+              setCurrentEpisodeStep(0);
+            }
+          }}
+          disabled={currentEpisode === allEpisodes.length || isPlaying}
+          style={{ marginLeft: 10 }}
+        >
+          Next Episode
+        </button>
+      </div>
+    );
+
+  // Step controls UI (classic)
+  const stepControls = algorithm !== "qlearning" &&
+    isSimulating &&
+    simulationSteps.length > 0 && (
+      <div className="flex items-center justify-between mt-2">
+        <button
+          onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+          disabled={currentStep === 0 || isPlaying}
+          className={`btn btn-blue ${
+            currentStep === 0 || isPlaying ? "btn-disabled" : ""
+          }`}
+        >
+          Previous
+        </button>
+        <span className="mx-2">
+          Step {currentStep + 1} of {simulationSteps.length}
+        </span>
+        <button
+          onClick={() =>
+            setCurrentStep(
+              Math.min(simulationSteps.length - 1, currentStep + 1)
+            )
+          }
+          disabled={currentStep === simulationSteps.length - 1 || isPlaying}
+          className={`btn btn-blue ${
+            currentStep === simulationSteps.length - 1 || isPlaying
+              ? "btn-disabled"
+              : ""
+          }`}
+        >
+          Next
+        </button>
+      </div>
+    );
+
+  // --- Render ---
   return (
     <div className="app-container">
-      {/* Header */}
       <div className="header">
         <h1>Multi-Agent Shape Formation</h1>
       </div>
-
-      {/* Message Bar */}
       <div className="message-bar">
         {message}
         {isLoading && <span className="loading"> Loading...</span>}
       </div>
-
-      {/* Main Content */}
       <div className="main-content">
-        {/* Left Sidebar */}
         <div className="sidebar">
           <h2>Mode Selection</h2>
-
           <button
             onClick={() => changeMode("selection")}
             disabled={isSimulating}
-            className={`btn ${mode === "selection" ? "btn-blue" : "btn-gray"} 
-                      ${isSimulating ? "btn-disabled" : ""}`}
+            className={`btn ${mode === "selection" ? "btn-blue" : "btn-gray"} ${
+              isSimulating ? "btn-disabled" : ""
+            }`}
           >
             Back to Selection
           </button>
-
           <button
             onClick={() => changeMode("predefined")}
             disabled={isSimulating}
-            className={`btn ${mode === "predefined" ? "btn-blue" : "btn-gray"}
-                      ${isSimulating ? "btn-disabled" : ""}`}
+            className={`btn ${
+              mode === "predefined" ? "btn-blue" : "btn-gray"
+            } ${isSimulating ? "btn-disabled" : ""}`}
           >
             Predefined Shapes
           </button>
-
           <button
             onClick={() => changeMode("custom")}
             disabled={isSimulating}
-            className={`btn ${mode === "custom" ? "btn-blue" : "btn-gray"}
-                      ${isSimulating ? "btn-disabled" : ""}`}
+            className={`btn ${mode === "custom" ? "btn-blue" : "btn-gray"} ${
+              isSimulating ? "btn-disabled" : ""
+            }`}
           >
             Custom Shapes
           </button>
-
           {mode === "predefined" && !isSimulating && (
             <>
               <h3 className="mt-4">Select Shape</h3>
@@ -616,7 +702,6 @@ const AgentShapeInterface = () => {
               </div>
             </>
           )}
-
           {(mode === "predefined" || mode === "custom") && !isSimulating && (
             <>
               <h3>Grid Controls</h3>
@@ -631,7 +716,6 @@ const AgentShapeInterface = () => {
                     Place Shape Blocks
                   </button>
                 )}
-
                 <button
                   onClick={() => setPlacementMode("obstacle")}
                   className={`btn btn-full ${
@@ -640,11 +724,9 @@ const AgentShapeInterface = () => {
                 >
                   Place Obstacles
                 </button>
-
                 <button onClick={resetGrid} className="btn btn-full btn-yellow">
                   Reset Grid
                 </button>
-
                 <div className="form-group">
                   <label className="form-label">Grid Size</label>
                   <select
@@ -659,7 +741,6 @@ const AgentShapeInterface = () => {
                   </select>
                 </div>
               </div>
-
               <button
                 onClick={runSimulation}
                 disabled={isSimulating || isLoading}
@@ -671,9 +752,7 @@ const AgentShapeInterface = () => {
               </button>
             </>
           )}
-
-          {/* Simulation Controls (appear when simulation is running) */}
-          {isSimulating && simulationSteps.length > 0 && (
+          {isSimulating && (
             <>
               <h3 className="mt-4">Simulation Controls</h3>
               <div className="mb-4">
@@ -692,41 +771,7 @@ const AgentShapeInterface = () => {
                     Pause Simulation
                   </button>
                 )}
-
-                <div className="flex items-center justify-between mt-2">
-                  <button
-                    onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-                    disabled={currentStep === 0 || isPlaying}
-                    className={`btn btn-blue ${
-                      currentStep === 0 || isPlaying ? "btn-disabled" : ""
-                    }`}
-                  >
-                    Previous
-                  </button>
-
-                  <span className="mx-2">
-                    Step {currentStep + 1} of {simulationSteps.length}
-                  </span>
-
-                  <button
-                    onClick={() =>
-                      setCurrentStep(
-                        Math.min(simulationSteps.length - 1, currentStep + 1)
-                      )
-                    }
-                    disabled={
-                      currentStep === simulationSteps.length - 1 || isPlaying
-                    }
-                    className={`btn btn-blue ${
-                      currentStep === simulationSteps.length - 1 || isPlaying
-                        ? "btn-disabled"
-                        : ""
-                    }`}
-                  >
-                    Next
-                  </button>
-                </div>
-
+                {algorithm === "qlearning" ? episodeControls : stepControls}
                 <button
                   onClick={stopSimulation}
                   className="btn btn-full btn-red mt-4"
@@ -737,8 +782,6 @@ const AgentShapeInterface = () => {
             </>
           )}
         </div>
-
-        {/* Main Grid Area */}
         <div className="grid-container">
           {mode === "selection" ? (
             <div className="welcome-screen">
@@ -769,55 +812,30 @@ const AgentShapeInterface = () => {
             >
               {grid.map((row, rowIndex) =>
                 row.map((cell, colIndex) => {
-                  // Determine if placing is allowed in this cell based on current mode and cell type
                   const isPlacementDisallowed =
                     (placementMode === "obstacle" && cell.type === "shape") ||
                     (placementMode === "shape" && cell.type === "obstacle");
-
-                  // Check if there's an agent at this position
                   const agent = agentPositions?.find(
                     (a) => a.x === rowIndex && a.y === colIndex
                   );
-
-                  // --- ADD THIS: Check if enemy is at this position ---
-                  const enemy =
-                    isSimulating &&
-                    simulationSteps[currentStep]?.enemy &&
-                    simulationSteps[currentStep].enemy.x === rowIndex &&
-                    simulationSteps[currentStep].enemy.y === colIndex;
-
-                  // Check if this is a target cell (when highlighting is enabled)
                   const isTargetCell =
                     highlightTargets && cell.type === "shape" && isSimulating;
-
-                  // Determine cell classes
                   let cellClassName = "cell ";
-
                   if (agent) {
                     if (algorithm === "qlearning") {
                       cellClassName += " cell-agent-black";
                     } else {
                       cellClassName += " cell-agent";
                     }
-                  } else if (enemy) {
-                    cellClassName += " cell-enemy";
                   } else if (cell.type === "shape") {
                     cellClassName += isTargetCell
                       ? "cell-target-highlight"
                       : "cell-shape";
-                  } else if (
-                    isSimulating &&
-                    simulationSteps[currentStep]?.obstacles?.some(
-                      ([r, c]) => r === rowIndex && c === colIndex
-                    )
-                  ) {
-                    cellClassName += "cell-obstacle";
                   } else if (cell.type === "obstacle") {
                     cellClassName += "cell-obstacle";
                   } else {
                     cellClassName += "cell-empty";
                   }
-
                   if (
                     !isSimulating &&
                     mode !== "selection" &&
@@ -826,48 +844,34 @@ const AgentShapeInterface = () => {
                   ) {
                     cellClassName += " not-allowed";
                   }
-                  
-                  // Add Q-value heatmap coloring
+                  // Q-value heatmap
                   let qValue = null;
                   if (
+                    showQValues &&
                     qValues.length > 0 &&
                     qValues[rowIndex] &&
                     typeof qValues[rowIndex][colIndex] === "number"
                   ) {
                     qValue = qValues[rowIndex][colIndex];
-                    // Normalize Q-value for coloring (assuming Q-values between -0.01 and 1)
                     const norm = Math.max(0, Math.min(1, (qValue + 0.01) / 1));
                     cellClassName += " cell-qvalue";
-                    // Inline style for background color
                     var qStyle = {
-                      background: `rgba(255, 0, 0, ${norm})`, // Red heatmap, adjust as needed
+                      background: `rgba(255, 0, 0, ${norm})`,
                     };
                   } else {
                     var qStyle = {};
                   }
-
                   return (
                     <div
                       key={`${rowIndex}-${colIndex}`}
-                      // onClick={() => handleCellClick(rowIndex, colIndex)}
                       onMouseDown={() => handleMouseDown(rowIndex, colIndex)}
                       onMouseEnter={() => handleMouseEnter(rowIndex, colIndex)}
-                      // onContextMenu={(e) => handleRightClick(e, rowIndex, colIndex)}
                       className={cellClassName}
                       style={qStyle}
                     >
-                      {/* Display agent ID if an agent is present and showAgentIds is true */}
                       {agent && showAgentIds && (
                         <span className="agent-id">{agent.id}</span>
                       )}
-
-                      {/* --- ADD THIS: Show enemy icon/letter --- */}
-                      {enemy && (
-                        <span className="enemy-icon" title="Enemy">
-                          E
-                        </span>
-                      )}
-                      {/* Visual indicator for not-allowed placements on hover */}
                       {!isSimulating &&
                         mode !== "selection" &&
                         placementMode !== "none" &&
@@ -878,17 +882,11 @@ const AgentShapeInterface = () => {
                             </div>
                           </div>
                         )}
-
-                      {/* Display path finding visualization if enabled */}
-                      {showPathFinding &&
-                        isSimulating &&
-                        simulationSteps[currentStep]?.paths?.[rowIndex]?.[
-                          colIndex
-                        ] &&
-                        !agent &&
-                        cell.type === "empty" && (
-                          <div className="cell-path"></div>
-                        )}
+                      {
+                        showPathFinding &&
+                          isSimulating &&
+                          false /* pathfinding not shown in Q-learning */
+                      }
                     </div>
                   );
                 })
@@ -896,14 +894,10 @@ const AgentShapeInterface = () => {
             </div>
           )}
         </div>
-
-        {/* Right Sidebar - Configuration Options */}
         {(mode === "predefined" || mode === "custom") && (
           <div className="sidebar">
             <h2>Simulation Settings</h2>
-
             <div>
-              {/* Algorithm Selection */}
               <div className="form-group">
                 <label className="form-label">Algorithm</label>
                 <select
@@ -926,11 +920,10 @@ const AgentShapeInterface = () => {
                     Gradient Field (Distributed)
                   </option>
                   <option value="qlearning">Q learning</option>
+                  <option value="deep">deep learning</option>
                 </select>
                 <p className="form-text">{getAlgorithmDescription()}</p>
               </div>
-
-              {/* Agent Topology - Always 8-directional */}
               <div className="form-group">
                 <label className="form-label">Agent Movement</label>
                 <select
@@ -947,8 +940,6 @@ const AgentShapeInterface = () => {
                   Your algorithms use 8-directional movement
                 </p>
               </div>
-
-              {/* Agent Count */}
               <div className="form-group">
                 <label className="form-label">Number of Agents</label>
                 <input
@@ -966,8 +957,6 @@ const AgentShapeInterface = () => {
                   <span>{gridSize * 3}</span>
                 </div>
               </div>
-
-              {/* Agent Speed */}
               <div className="form-group">
                 <label className="form-label">Animation Speed</label>
                 <select
@@ -980,11 +969,18 @@ const AgentShapeInterface = () => {
                   <option value="fast">Fast</option>
                 </select>
               </div>
-
-              {/* Visualization Options */}
               <div className="form-group">
                 <h3>Visualization Options</h3>
                 <div>
+                  <div className="checkbox-container">
+                    <input
+                      type="checkbox"
+                      id="showQValues"
+                      checked={showQValues}
+                      onChange={(e) => setShowQValues(e.target.checked)}
+                    />
+                    <span>Show Q-Value Heatmap</span>
+                  </div>
                   <div className="checkbox-container">
                     <input
                       type="checkbox"
@@ -1014,8 +1010,6 @@ const AgentShapeInterface = () => {
                   </div>
                 </div>
               </div>
-
-              {/* Algorithm Info */}
               <div className="info-box mt-4">
                 <h3 className="mb-2">Algorithm Details</h3>
                 <p className="info-text">{getAlgorithmDescription()}</p>
