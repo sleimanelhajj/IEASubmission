@@ -921,11 +921,11 @@ const AgentShapeInterface = () => {
                   <option value="minimax">Minimax</option>
                   <option value="expectimax">Expectimax</option>
                   <option value="minimax-adv">Minimax-adc</option>
-                  <option value="gradient-field">
-                    Gradient Field (Distributed)
-                  </option>
+                  <option value="minimax-adv-2">Minimax-adc-2</option>
                   <option value="qlearning">Q learning</option>
                   <option value="deep">deep learning</option>
+                  <option value="stochastic">Stochastic</option>
+                  <option value="astar">A star algo</option>
                 </select>
                 <p className="form-text">{getAlgorithmDescription()}</p>
               </div>
