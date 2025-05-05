@@ -243,6 +243,38 @@ def is_adjacent(pos1, pos2):
     return max(abs(pos1[0] - pos2[0]), abs(pos1[1] - pos2[1])) == 1
 
 
+def compute_gradient_field(grid, target_positions, obstacle_positions):
+    """
+    Returns a 2D numpy array where each cell contains the Manhattan distance to the nearest target,
+    or np.inf for obstacles.
+    """
+    import numpy as np
+    from collections import deque
+
+    rows, cols = grid.shape
+    gradient = np.full((rows, cols), np.inf)
+    visited = set(obstacle_positions)
+    queue = deque()
+
+    # Set targets to 0 and add to queue
+    for r, c in target_positions:
+        gradient[r, c] = 0
+        queue.append((r, c))
+
+    # BFS to fill gradient field
+    while queue:
+        r, c = queue.popleft()
+        for nr, nc in get_neighbors((r, c), grid.shape):
+            if (nr, nc) not in visited and gradient[nr, nc] > gradient[r, c] + 1:
+                gradient[nr, nc] = gradient[r, c] + 1
+                queue.append((nr, nc))
+                visited.add((nr, nc))
+    # Set obstacles to np.inf
+    for r, c in obstacle_positions:
+        gradient[r, c] = np.inf
+    return gradient
+
+
 # minmax integration
 
 # ======================================================
@@ -481,390 +513,6 @@ def move_agents_inside_out(grid, agent_positions, target_positions, obstacle_pos
 
         step_counter += 1
 
-        if all_reached:
-            break
-
-    return simulation_steps
-    """
-    Modified version of your move_agents_no_collision function to:
-    1. Remove Streamlit dependencies
-    2. Return step-by-step data for the React frontend
-    3. Slightly simplified for API usage
-    """
-    # Initialize metrics
-    metrics = {
-        "agent_steps": [0] * len(agent_positions),
-        "waiting_time": [0] * len(agent_positions),
-        "manhattan_distances": [0] * len(agent_positions),
-        "path_length": [0] * len(agent_positions),
-        "reached_target": [False] * len(agent_positions),
-        "is_inner": [False] * len(agent_positions),
-        "assigned_target": [None] * len(agent_positions),
-        "inner_targets_count": 0,
-        "outer_targets_count": 0,
-        "obstacles_count": 0,
-        "conflicts": 0,
-    }
-
-    metrics["obstacles_count"] = len(obstacle_positions)
-
-    # -------- Identify Inner and Outer Targets --------
-    target_set = set(target_positions)
-
-    inner_targets = []
-    outer_targets = []
-
-    # Directions for neighboring cells
-    directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
-
-    for target in target_positions:
-        r, c = target
-        is_boundary = False
-
-        for dr, dc in directions:
-            nr, nc = r + dr, c + dc
-            # If the neighbor is not in targets, this is a boundary target
-            if (nr, nc) not in target_set:
-                is_boundary = True
-                break
-
-        if is_boundary:
-            outer_targets.append(target)
-        else:
-            inner_targets.append(target)
-
-    # If no inner targets were found, use centrality as an alternative
-    if not inner_targets:
-        if target_positions:
-            center_r = sum(r for r, _ in target_positions) / len(target_positions)
-            center_c = sum(c for _, c in target_positions) / len(target_positions)
-
-            # Sort by distance to center
-            sorted_targets = sorted(
-                target_positions,
-                key=lambda pos: (pos[0] - center_r) ** 2 + (pos[1] - center_c) ** 2,
-            )
-
-            inner_count = max(1, len(target_positions) // 3)
-            inner_targets = sorted_targets[:inner_count]
-            outer_targets = sorted_targets[inner_count:]
-
-    metrics["inner_targets_count"] = len(inner_targets)
-    metrics["outer_targets_count"] = len(outer_targets)
-
-    # Initialize grid
-    new_grid = np.zeros_like(grid)
-    for r, c in obstacle_positions:
-        new_grid[r, c] = -1
-    for a in agent_positions:
-        new_grid[a[0], a[1]] = 1
-    grid = new_grid
-
-    # -------- PHASE 1: INNER TARGETS ASSIGNMENT --------
-    # Phase 1: Assign agents to inner targets only
-    remaining_agents = agent_positions.copy()
-    inner_assignments = []
-
-    # If we have inner targets, assign closest agents to them
-    if inner_targets:
-        # Create cost matrix for inner targets only
-        inner_cost = []
-        for agent in remaining_agents:
-            agent_costs = []
-            for target in inner_targets:
-                dist = manhattan_dist(agent, target)
-                agent_costs.append((dist, agent, target))
-            agent_costs.sort()
-            inner_cost.append(agent_costs)
-
-        # Flatten and sort all agent-target pairs by distance
-        all_costs = []
-        for agent_costs in inner_cost:
-            all_costs.extend(agent_costs)
-        all_costs.sort()
-
-        # Greedy assignment - take closest pairs first
-        assigned_agents = set()
-        assigned_targets = set()
-
-        for dist, agent, target in all_costs:
-            if agent not in assigned_agents and target not in assigned_targets:
-                inner_assignments.append((agent, target))
-                assigned_agents.add(agent)
-                assigned_targets.add(target)
-
-                # Find the agent index and update metrics
-                agent_idx = agent_positions.index(agent)
-                metrics["is_inner"][agent_idx] = True
-                metrics["assigned_target"][agent_idx] = target
-                metrics["manhattan_distances"][agent_idx] = dist
-
-                # Calculate initial path length for efficiency metrics
-                initial_path = bfs_dynamic(
-                    agent, target, grid, set(), set(obstacle_positions)
-                )
-                if initial_path:
-                    metrics["path_length"][agent_idx] = len(initial_path)
-                else:
-                    metrics["path_length"][
-                        agent_idx
-                    ] = dist  # Use Manhattan distance if no path found
-
-                # Stop when all inner targets are assigned
-                if len(assigned_targets) == len(inner_targets):
-                    break
-
-        # Remove assigned agents from remaining_agents
-        remaining_agents = [a for a in remaining_agents if a not in assigned_agents]
-
-    # -------- PHASE 2: OUTER TARGETS ASSIGNMENT --------
-    # Phase 2: Assign remaining agents to outer targets
-    outer_assignments = []
-
-    if outer_targets and remaining_agents:
-        # Create cost matrix for outer targets only
-        outer_cost = []
-        for agent in remaining_agents:
-            agent_costs = []
-            for target in outer_targets:
-                dist = manhattan_dist(agent, target)
-                agent_costs.append((dist, agent, target))
-            agent_costs.sort()
-            outer_cost.append(agent_costs)
-
-        # Flatten and sort all agent-target pairs by distance
-        all_costs = []
-        for agent_costs in outer_cost:
-            all_costs.extend(agent_costs)
-        all_costs.sort()
-
-        # Greedy assignment - take closest pairs first
-        assigned_agents = set()
-        assigned_targets = set()
-
-        for dist, agent, target in all_costs:
-            if agent not in assigned_agents and target not in assigned_targets:
-                outer_assignments.append((agent, target))
-                assigned_agents.add(agent)
-                assigned_targets.add(target)
-
-                # Find the agent index and update metrics
-                agent_idx = agent_positions.index(agent)
-                metrics["is_inner"][agent_idx] = False
-                metrics["assigned_target"][agent_idx] = target
-                metrics["manhattan_distances"][agent_idx] = dist
-
-                # Calculate initial path length for efficiency metrics
-                initial_path = bfs_dynamic(
-                    agent, target, grid, set(), set(obstacle_positions)
-                )
-                if initial_path:
-                    metrics["path_length"][agent_idx] = len(initial_path)
-                else:
-                    metrics["path_length"][
-                        agent_idx
-                    ] = dist  # Use Manhattan distance if no path found
-
-                # Stop when all agents or targets are assigned
-                if len(assigned_targets) == len(outer_targets) or len(
-                    assigned_agents
-                ) == len(remaining_agents):
-                    break
-
-    # Combine assignments (inner first, then outer)
-    all_assignments = inner_assignments + outer_assignments
-
-    # -------- Store agent state with target info --------
-    agents = []
-    for agent, target in all_assignments:
-        is_inner = target in inner_targets
-        agent_idx = agent_positions.index(agent)
-        agents.append(
-            {"id": agent_idx, "pos": agent, "target": target, "is_inner": is_inner}
-        )
-
-    # Track any agents without targets (happens when more agents than targets)
-    unassigned_agents = [
-        a for a in agent_positions if a not in [ag["pos"] for ag in agents]
-    ]
-    for agent in unassigned_agents:
-        agent_idx = agent_positions.index(agent)
-        agents.append(
-            {"id": agent_idx, "pos": agent, "target": None, "is_inner": False}
-        )
-
-    # -------- PHASE 3: MOVEMENT ALGORITHM WITH STEP TRACKING --------
-    # For React frontend - collect all steps
-    simulation_steps = []
-
-    # Add initial state
-    initial_agents = []
-    for ag in agents:
-        initial_agents.append(
-            {
-                "id": ag["id"] + 1,  # 1-indexed for display
-                "x": ag["pos"][0],
-                "y": ag["pos"][1],
-            }
-        )
-
-    # Create path visualization matrix for the frontend
-    path_visualization = {}
-    for agent in agents:
-        if agent["target"] is not None:
-            current = agent["pos"]
-            target = agent["target"]
-            path = bfs_dynamic(current, target, grid, set(), set(obstacle_positions))
-            # Mark path cells for visualization
-            for cell in path:
-                r, c = cell
-                if (r, c) != current and (r, c) != target:  # Skip start and end
-                    if r not in path_visualization:
-                        path_visualization[r] = {}
-                    path_visualization[r][c] = True
-
-    simulation_steps.append(
-        {"step": 0, "agents": initial_agents, "paths": path_visualization}
-    )
-
-    # Main movement loop
-    step_counter = 1
-    max_steps = 100  # Limit steps for API response size
-
-    while True and step_counter < max_steps:
-        new_grid = np.zeros_like(grid)
-        # Add obstacles back
-        for r, c in obstacle_positions:
-            new_grid[r, c] = -1
-
-        move_dict = {}
-        conflict_positions = set()
-        all_reached = True
-
-        # First sort by inner/outer, then by distance to target
-        # This ensures inner targets get priority in movement
-        agents_with_targets = [ag for ag in agents if ag["target"] is not None]
-        agents_with_targets.sort(
-            key=lambda ag: (not ag["is_inner"], manhattan_dist(ag["pos"], ag["target"]))
-        )
-
-        # Get positions of all agents for collision avoidance
-        agent_positions_set = set(ag["pos"] for ag in agents)
-
-        # First process agents with targets
-        for ag in agents_with_targets:
-            current = ag["pos"]
-            target = ag["target"]
-            agent_id = ag["id"]
-
-            if current == target:
-                move_dict[current] = current  # Already at target
-
-                # If this is the first time reaching the target, update metrics
-                if not metrics["reached_target"][agent_id]:
-                    metrics["reached_target"][agent_id] = True
-                continue
-
-            all_reached = False  # At least one agent still moving
-
-            # Calculate path avoiding other agents and obstacles
-            agent_set_except_self = agent_positions_set - {current}
-            path = bfs_dynamic(
-                current, target, grid, agent_set_except_self, obstacle_positions
-            )
-
-            if path:
-                next_step = path[0]
-                if next_step not in conflict_positions:
-                    move_dict[current] = next_step
-                    conflict_positions.add(next_step)
-                else:
-                    move_dict[current] = current  # Stay put due to conflict
-                    metrics["waiting_time"][agent_id] += 1
-                    metrics["conflicts"] += 1
-            else:
-                move_dict[current] = current  # No path, stay put
-                metrics["waiting_time"][agent_id] += 1
-
-        # Then process agents without targets (just stay in place)
-        for ag in agents:
-            if ag["target"] is None:
-                move_dict[ag["pos"]] = ag["pos"]
-
-        # Make sure ALL agents are accounted for
-        for ag in agents:
-            if ag["pos"] not in move_dict:
-                move_dict[ag["pos"]] = ag["pos"]
-
-        # Resolve direct swaps
-        final_moves = {}
-        for old_p, new_p in move_dict.items():
-            if new_p in move_dict and move_dict[new_p] == old_p and new_p != old_p:
-                # No swapping - both agents stay put
-                final_moves[old_p] = old_p
-
-                # Find the agents involved in swap and increment their conflict counters
-                for ag in agents:
-                    if ag["pos"] == old_p or ag["pos"] == new_p:
-                        metrics["waiting_time"][ag["id"]] += 1
-
-                metrics["conflicts"] += 2  # Count as two conflicts
-            else:
-                final_moves[old_p] = new_p
-
-        # Update agent positions
-        updated_agents = []
-        for ag in agents:
-            old_pos = ag["pos"]
-            agent_id = ag["id"]
-
-            if old_pos in final_moves:
-                new_pos = final_moves[old_pos]
-                if new_pos in obstacle_positions:
-                    new_pos = old_pos  # Safety check
-                    metrics["waiting_time"][agent_id] += 1
-            else:
-                new_pos = old_pos  # Default to staying put if not in moves dict
-                metrics["waiting_time"][agent_id] += 1
-
-            # Count a step if the agent actually moved
-            if old_pos != new_pos:
-                metrics["agent_steps"][agent_id] += 1
-
-            # Add agent to grid
-            new_grid[new_pos[0], new_pos[1]] = 1
-
-            # Update agent position
-            updated_agents.append(
-                {
-                    "id": agent_id,
-                    "pos": new_pos,
-                    "target": ag["target"],
-                    "is_inner": ag["is_inner"],
-                }
-            )
-
-        agents = updated_agents
-        grid = new_grid
-
-        # Create step data for React frontend
-        step_agents = []
-        for ag in agents:
-            step_agents.append(
-                {
-                    "id": ag["id"] + 1,  # 1-indexed for display
-                    "x": ag["pos"][0],
-                    "y": ag["pos"][1],
-                }
-            )
-
-        simulation_steps.append(
-            {"step": step_counter, "agents": step_agents, "paths": path_visualization}
-        )
-
-        step_counter += 1
-
-        # Exit condition - all agents have reached their targets
         if all_reached:
             break
 
@@ -2342,6 +1990,217 @@ def move_agents_minimax_with_adversary(
 
 
 # ======================================================
+# gradient
+# ======================================================
+
+
+def move_agents_gradient_field(
+    grid, agent_positions, target_positions, obstacle_positions
+):
+    """
+    Distributed decision-making: Each agent moves to the neighbor with the lowest gradient value.
+    """
+    import numpy as np
+
+    gradient = compute_gradient_field(grid, target_positions, obstacle_positions)
+    agents = [{"id": i, "pos": pos} for i, pos in enumerate(agent_positions)]
+    simulation_steps = []
+    step_counter = 0
+    max_steps = 100
+
+    simulation_steps.append(
+        {
+            "step": 0,
+            "agents": [
+                {"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]}
+                for ag in agents
+            ],
+            "paths": {},
+        }
+    )
+
+    targets_set = set(target_positions)
+    obstacles_set = set(obstacle_positions)
+
+    while step_counter < max_steps:
+        all_reached = True
+        occupied = {ag["pos"] for ag in agents}
+        new_positions = []
+
+        for ag in agents:
+            if ag["pos"] in targets_set:
+                new_positions.append(ag["pos"])
+                continue
+            all_reached = False
+            neighbors = get_neighbors(ag["pos"], grid.shape) + [ag["pos"]]
+            # Only consider unoccupied and non-obstacle cells
+            candidates = [
+                n for n in neighbors if n not in occupied and n not in obstacles_set
+            ]
+            if not candidates:
+                candidates = [ag["pos"]]
+            # Choose neighbor with lowest gradient value
+            min_grad = min(gradient[n] for n in candidates)
+            best_moves = [n for n in candidates if gradient[n] == min_grad]
+            next_pos = best_moves[0]
+            new_positions.append(next_pos)
+
+        # Resolve conflicts: if two agents want the same cell, both stay put
+        counts = {}
+        for pos in new_positions:
+            counts[pos] = counts.get(pos, 0) + 1
+        for i, pos in enumerate(new_positions):
+            if counts[pos] > 1 and pos != agents[i]["pos"]:
+                new_positions[i] = agents[i]["pos"]
+
+        # Update agent positions
+        for i, ag in enumerate(agents):
+            ag["pos"] = new_positions[i]
+
+        simulation_steps.append(
+            {
+                "step": step_counter + 1,
+                "agents": [
+                    {"id": ag["id"] + 1, "x": ag["pos"][0], "y": ag["pos"][1]}
+                    for ag in agents
+                ],
+                "paths": {},
+            }
+        )
+
+        step_counter += 1
+        if all_reached:
+            break
+
+    return simulation_steps
+
+
+# ======================================================
+# gradient
+# ======================================================
+
+
+def move_agents_q_learning(
+    grid,
+    agent_positions,
+    target_positions,
+    obstacle_positions,
+    episodes=500,
+    alpha=0.9,
+    gamma=0.9,
+    epsilon=0.3,
+):
+    """
+    Simple Q-learning for a single agent in the grid.
+    Shows the first episode (learning phase) as initial steps.
+    """
+    rows, cols = grid.shape
+    actions = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # up, down, left, right
+    action_indices = list(range(len(actions)))
+    target = target_positions[0]
+    start = agent_positions[0]
+
+    Q = np.zeros((rows, cols, len(actions)))
+    rewards = np.full((rows, cols), -0.01)
+    for r, c in obstacle_positions:
+        rewards[r, c] = -1
+    rewards[target[0], target[1]] = 1
+
+    # --- Record the first episode for visualization ---
+    learning_steps = []
+    state = start
+    for step in range(100):
+        learning_steps.append(
+            {
+                "step": step,
+                "agents": [{"id": 1, "x": state[0], "y": state[1]}],
+                "phase": "learning",
+            }
+        )
+        if np.random.rand() < epsilon:
+            a = np.random.choice(action_indices)
+        else:
+            a = np.argmax(Q[state[0], state[1]])
+        dr, dc = actions[a]
+        nr, nc = state[0] + dr, state[1] + dc
+        if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in obstacle_positions:
+            next_state = (nr, nc)
+        else:
+            next_state = state
+        reward = rewards[next_state[0], next_state[1]]
+        Q[state[0], state[1], a] = Q[state[0], state[1], a] + alpha * (
+            reward
+            + gamma * np.max(Q[next_state[0], next_state[1]])
+            - Q[state[0], state[1], a]
+        )
+        state = next_state
+        if state == target or reward == -1:
+            break
+
+    # --- Continue training for remaining episodes (no need to record) ---
+    for ep in range(1, episodes):
+        state = start
+        for step in range(100):
+            if np.random.rand() < epsilon:
+                a = np.random.choice(action_indices)
+            else:
+                a = np.argmax(Q[state[0], state[1]])
+            dr, dc = actions[a]
+            nr, nc = state[0] + dr, state[1] + dc
+            if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in obstacle_positions:
+                next_state = (nr, nc)
+            else:
+                next_state = state
+            reward = rewards[next_state[0], next_state[1]]
+            Q[state[0], state[1], a] = Q[state[0], state[1], a] + alpha * (
+                reward
+                + gamma * np.max(Q[next_state[0], next_state[1]])
+                - Q[state[0], state[1], a]
+            )
+            state = next_state
+            if state == target or reward == -1:
+                break
+
+    # --- After training, generate the optimal path ---
+    state = start
+    path = [state]
+    for _ in range(100):
+        a = np.argmax(Q[state[0], state[1]])
+        dr, dc = actions[a]
+        nr, nc = state[0] + dr, state[1] + dc
+        if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in obstacle_positions:
+            next_state = (nr, nc)
+        else:
+            next_state = state
+        path.append(next_state)
+        state = next_state
+        if state == target:
+            break
+
+    # --- Format for your frontend ---
+    simulation_steps = []
+    # Add learning phase steps first
+    simulation_steps.extend(learning_steps)
+    # Add optimal path steps (with phase "exploitation")
+    for i, pos in enumerate(path):
+        simulation_steps.append(
+            {
+                "step": len(learning_steps) + i,
+                "agents": [{"id": 1, "x": pos[0], "y": pos[1]}],
+                "phase": "exploitation",
+            }
+        )
+
+        # --- Print Q-table summary for debugging ---
+    max_q = np.max(Q, axis=2)
+    simulation_result = {
+        "steps": simulation_steps,
+        "q_values": max_q.tolist(),  # Add this line
+    }
+    return simulation_result
+
+
+# ======================================================
 # API Endpoints
 # ======================================================
 
@@ -2470,7 +2329,16 @@ def run_simulation():
                 obstacle_positions,
                 enemy_position,
             )
-        # ...existing code...
+        elif algorithm == "gradient-field":
+            simulation_steps = move_agents_gradient_field(
+                grid, agent_positions, target_positions, obstacle_positions
+            )
+        elif algorithm == "qlearning":
+            result = move_agents_q_learning(
+                grid, agent_positions, target_positions, obstacle_positions
+            )
+            return jsonify(result)
+        
         else:  # Default to inside-out
             simulation_steps = move_agents_inside_out(
                 grid, agent_positions, target_positions, obstacle_positions

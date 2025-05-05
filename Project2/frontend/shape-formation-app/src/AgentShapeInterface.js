@@ -29,8 +29,10 @@ const AgentShapeInterface = () => {
   const [showPathFinding, setShowPathFinding] = useState(true);
   const [highlightTargets, setHighlightTargets] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [showQValues, setShowQValues] = useState(false); // Add showQValues state
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackIntervalId, setPlaybackIntervalId] = useState(null);
+  const [qValues, setQValues] = useState([]);
 
   // adding state for obstacles (obstacle detection code)
   const [obstacles, setObstacles] = useState([]);
@@ -322,6 +324,7 @@ const AgentShapeInterface = () => {
 
       const result = await response.json();
       setSimulationSteps(result.steps);
+      setQValues(result.q_values || []); // Store Q-values if available
       setCurrentStep(0);
       setMessage(
         "Simulation received! Press play to view the agent movements."
@@ -791,15 +794,18 @@ const AgentShapeInterface = () => {
                   let cellClassName = "cell ";
 
                   if (agent) {
-                    cellClassName += "cell-agent";
+                    if (algorithm === "qlearning") {
+                      cellClassName += " cell-agent-black";
+                    } else {
+                      cellClassName += " cell-agent";
+                    }
                   } else if (enemy) {
-                    cellClassName += "cell-enemy"; // <-- Add a new CSS class for enemy
+                    cellClassName += " cell-enemy";
                   } else if (cell.type === "shape") {
                     cellClassName += isTargetCell
                       ? "cell-target-highlight"
                       : "cell-shape";
                   } else if (
-                    // During simulation, check if this cell is a dynamic obstacle
                     isSimulating &&
                     simulationSteps[currentStep]?.obstacles?.some(
                       ([r, c]) => r === rowIndex && c === colIndex
@@ -807,7 +813,6 @@ const AgentShapeInterface = () => {
                   ) {
                     cellClassName += "cell-obstacle";
                   } else if (cell.type === "obstacle") {
-                    // Always show static obstacles when not simulating or if not overwritten by dynamic
                     cellClassName += "cell-obstacle";
                   } else {
                     cellClassName += "cell-empty";
@@ -821,6 +826,25 @@ const AgentShapeInterface = () => {
                   ) {
                     cellClassName += " not-allowed";
                   }
+                  
+                  // Add Q-value heatmap coloring
+                  let qValue = null;
+                  if (
+                    qValues.length > 0 &&
+                    qValues[rowIndex] &&
+                    typeof qValues[rowIndex][colIndex] === "number"
+                  ) {
+                    qValue = qValues[rowIndex][colIndex];
+                    // Normalize Q-value for coloring (assuming Q-values between -0.01 and 1)
+                    const norm = Math.max(0, Math.min(1, (qValue + 0.01) / 1));
+                    cellClassName += " cell-qvalue";
+                    // Inline style for background color
+                    var qStyle = {
+                      background: `rgba(255, 0, 0, ${norm})`, // Red heatmap, adjust as needed
+                    };
+                  } else {
+                    var qStyle = {};
+                  }
 
                   return (
                     <div
@@ -830,6 +854,7 @@ const AgentShapeInterface = () => {
                       onMouseEnter={() => handleMouseEnter(rowIndex, colIndex)}
                       // onContextMenu={(e) => handleRightClick(e, rowIndex, colIndex)}
                       className={cellClassName}
+                      style={qStyle}
                     >
                       {/* Display agent ID if an agent is present and showAgentIds is true */}
                       {agent && showAgentIds && (
@@ -897,6 +922,10 @@ const AgentShapeInterface = () => {
                   <option value="minimax">Minimax</option>
                   <option value="expectimax">Expectimax</option>
                   <option value="minimax-adv">Minimax-adc</option>
+                  <option value="gradient-field">
+                    Gradient Field (Distributed)
+                  </option>
+                  <option value="qlearning">Q learning</option>
                 </select>
                 <p className="form-text">{getAlgorithmDescription()}</p>
               </div>

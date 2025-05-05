@@ -422,3 +422,15 @@
   top: 50%;
   transform: translate(-50%, -50%);
 }
+
+
+.cell-qvalue {
+  /* Optionally add a border or effect to distinguish Q-value cells */
+  box-shadow: 0 0 2px 1px rgba(255,0,0,0.2);
+}
+
+.cell-agent-black {
+  background: #111 !important;
+  color: #fff !important;
+  border: 2px solid #fff;
+}
