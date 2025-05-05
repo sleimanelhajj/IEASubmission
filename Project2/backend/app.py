@@ -11,6 +11,9 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import random
+import pickle
+import os
+
 
 app = Flask(__name__)
 CORS(app)  # Enable cross-origin requests
@@ -2182,7 +2185,7 @@ def move_agents_q_learning(
 
 
 # ======================================================
-#
+# deep learning
 # ======================================================
 
 
@@ -2198,7 +2201,7 @@ class DQN(nn.Module):
 
 
 def move_agents_deep_qlearning(
-    grid, agent_positions, target_positions, obstacle_positions, episodes=200
+    grid, agent_positions, target_positions, obstacle_positions, episodes=200, pretrained_model=None
 ):
     print("Deep Q-Learning: Starting training...")
     state_dim = 4  # (agent_row, agent_col, target_row, target_col)
@@ -2207,6 +2210,10 @@ def move_agents_deep_qlearning(
     device = torch.device("cpu")
 
     model = DQN(state_dim, action_dim).to(device)
+    if pretrained_model is not None:
+        model.load_state_dict(pretrained_model.state_dict())
+        print("Loaded pretrained model weights.")
+
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     loss_fn = nn.MSELoss()
     gamma = 0.95
@@ -2217,52 +2224,53 @@ def move_agents_deep_qlearning(
 
     memory = []
 
-    for ep in range(episodes):
-        agent_pos = np.array(start)
-        for t in range(100):
-            state = np.array([agent_pos[0], agent_pos[1], target[0], target[1]])
-            state_tensor = torch.FloatTensor(state).to(device)
-            if random.random() < epsilon:
-                a = random.randint(0, action_dim - 1)
-            else:
-                with torch.no_grad():
-                    qvals = model(state_tensor)
-                    a = torch.argmax(qvals).item()
-            dr, dc = actions[a]
-            next_agent_pos = (agent_pos[0] + dr, agent_pos[1] + dc)
-            if (
-                0 <= next_agent_pos[0] < grid.shape[0]
-                and 0 <= next_agent_pos[1] < grid.shape[1]
-                and (next_agent_pos not in obstacle_positions)
-            ):
-                reward = 1 if next_agent_pos == target else -0.01
-            else:
-                next_agent_pos = tuple(agent_pos)
-                reward = -1
-            next_state = np.array(
-                [next_agent_pos[0], next_agent_pos[1], target[0], target[1]]
-            )
-            memory.append((state, a, reward, next_state))
-            if len(memory) > 32:
-                batch = random.sample(memory, 32)
-                states, actions_, rewards, next_states = zip(*batch)
-                states = torch.FloatTensor(np.array(states)).to(device)
-                actions_ = torch.LongTensor(actions_).to(device)
-                rewards = torch.FloatTensor(rewards).to(device)
-                next_states = torch.FloatTensor(np.array(next_states)).to(device)
-                qvals = model(states).gather(1, actions_.unsqueeze(1)).squeeze()
-                with torch.no_grad():
-                    next_qvals = model(next_states).max(1)[0]
-                targets = rewards + gamma * next_qvals
-                loss = loss_fn(qvals, targets)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-            agent_pos = np.array(next_agent_pos)
-            if tuple(agent_pos) == target or reward == -1:
-                break
-        if (ep + 1) % 50 == 0:
-            print(f"Episode {ep+1}/{episodes} completed.")
+    if episodes > 0:
+        for ep in range(episodes):
+            agent_pos = np.array(start)
+            for t in range(100):
+                state = np.array([agent_pos[0], agent_pos[1], target[0], target[1]])
+                state_tensor = torch.FloatTensor(state).to(device)
+                if random.random() < epsilon:
+                    a = random.randint(0, action_dim - 1)
+                else:
+                    with torch.no_grad():
+                        qvals = model(state_tensor)
+                        a = torch.argmax(qvals).item()
+                dr, dc = actions[a]
+                next_agent_pos = (agent_pos[0] + dr, agent_pos[1] + dc)
+                if (
+                    0 <= next_agent_pos[0] < grid.shape[0]
+                    and 0 <= next_agent_pos[1] < grid.shape[1]
+                    and (next_agent_pos not in obstacle_positions)
+                ):
+                    reward = 1 if next_agent_pos == target else -0.01
+                else:
+                    next_agent_pos = tuple(agent_pos)
+                    reward = -1
+                next_state = np.array(
+                    [next_agent_pos[0], next_agent_pos[1], target[0], target[1]]
+                )
+                memory.append((state, a, reward, next_state))
+                if len(memory) > 32:
+                    batch = random.sample(memory, 32)
+                    states, actions_, rewards, next_states = zip(*batch)
+                    states = torch.FloatTensor(np.array(states)).to(device)
+                    actions_ = torch.LongTensor(actions_).to(device)
+                    rewards = torch.FloatTensor(rewards).to(device)
+                    next_states = torch.FloatTensor(np.array(next_states)).to(device)
+                    qvals = model(states).gather(1, actions_.unsqueeze(1)).squeeze()
+                    with torch.no_grad():
+                        next_qvals = model(next_states).max(1)[0]
+                    targets = rewards + gamma * next_qvals
+                    loss = loss_fn(qvals, targets)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                agent_pos = np.array(next_agent_pos)
+                if tuple(agent_pos) == target or reward == -1:
+                    break
+            if (ep + 1) % 50 == 0:
+                print(f"Episode {ep+1}/{episodes} completed.")
 
     print("Deep Q-Learning: Training complete. Starting exploitation...")
 
@@ -2301,8 +2309,8 @@ def move_agents_deep_qlearning(
             }
         )
     print("Deep Q-Learning: Returning exploitation steps to frontend.")
-    return {"exploitation": exploitation_steps}
-
+    # Save model state for future use
+    return {"exploitation": exploitation_steps, "model_state": model.state_dict()}
 
 # ======================================================
 # API Endpoints
@@ -2315,6 +2323,9 @@ def move_agents_deep_qlearning(
 def run_simulation():
     """API endpoint to receive grid data and return simulation steps."""
     try:
+        import pickle
+        import os
+
         # Get data from request
         data = request.json
         grid_data = data["gridData"]
@@ -2378,17 +2389,52 @@ def run_simulation():
         # Determine which algorithm to use
         algorithm = config_data.get("algorithm", "inside-out")
 
-        # Set the target to the center ONLY for deep learning
+        # Set the target and agent start randomly ONLY for deep learning
         if algorithm == "deep":
-            grid_height = len(grid_data)
-            grid_width = len(grid_data[0])
-            center_r = grid_height // 2
-            center_c = grid_width // 2
-            target_positions = [(center_r, center_c)]
-            result = move_agents_deep_qlearning(
-                grid, agent_positions, target_positions, obstacle_positions
+            # Find all empty cells
+            empty_cells = [
+                (r, c)
+                for r in range(grid.shape[0])
+                for c in range(grid.shape[1])
+                if grid[r, c] == 0
+            ]
+            if len(empty_cells) < 2:
+                return jsonify({"error": "Not enough empty cells for agent and target."}), 400
+            start_pos = random.choice(empty_cells)
+            target_pos = random.choice([cell for cell in empty_cells if cell != start_pos])
+            agent_positions = [start_pos]
+            target_positions = [target_pos]
+
+            # Model save/load logic
+            model_dir = "trained_models"
+            os.makedirs(model_dir, exist_ok=True)
+            model_path = os.path.join(
+                model_dir, f"dqn_{start_pos[0]}_{start_pos[1]}_{target_pos[0]}_{target_pos[1]}.pkl"
             )
-            return jsonify({"steps": result["exploitation"]})
+
+            pretrained_model = None
+            if os.path.exists(model_path):
+                print(f"Loading pretrained model from {model_path}")
+                with open(model_path, "rb") as f:
+                    state_dict = pickle.load(f)
+                pretrained_model = DQN(4, 4)
+                pretrained_model.load_state_dict(state_dict)
+
+            result = move_agents_deep_qlearning(
+                grid, agent_positions, target_positions, obstacle_positions,
+                pretrained_model=pretrained_model if pretrained_model else None
+            )
+
+            # Save model if newly trained
+            if not pretrained_model:
+                with open(model_path, "wb") as f:
+                    pickle.dump(result["model_state"], f)
+
+            return jsonify({
+                "steps": result["exploitation"],
+                "start": {"x": start_pos[0], "y": start_pos[1]},
+                "target": {"x": target_pos[0], "y": target_pos[1]}
+            })
 
         # Generate simulation steps using the selected algorithm
         if algorithm == "leader-follower":
@@ -2411,18 +2457,10 @@ def run_simulation():
             simulation_steps = move_agents_cellular_automata(
                 grid, agent_positions, target_positions, obstacle_positions
             )
-            # ...existing code...
         elif algorithm == "expectimax":
             simulation_steps = move_agents_expectimax(
                 grid, agent_positions, target_positions, obstacle_positions
             )
-            # ...existing code...
-        elif algorithm == "deep":
-            result = move_agents_deep_qlearning(
-                grid, agent_positions, target_positions, obstacle_positions
-            )
-            return jsonify({"steps": result["exploitation"]})
-        # ...existing code...
         elif algorithm == "minimax-adv":
             # Example: place enemy in the center of the grid
             grid_height = grid.shape[0]
@@ -2461,7 +2499,6 @@ def run_simulation():
                 grid, agent_positions, target_positions, obstacle_positions
             )
             return jsonify(result)
-
         else:  # Default to inside-out
             simulation_steps = move_agents_inside_out(
                 grid, agent_positions, target_positions, obstacle_positions

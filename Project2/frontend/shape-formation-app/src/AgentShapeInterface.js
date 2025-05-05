@@ -13,6 +13,10 @@ const AgentShapeInterface = () => {
   const [lastCellInteracted, setLastCellInteracted] = useState(null);
   const [dragMode, setDragMode] = useState(null);
 
+  // Add these near your other useState hooks
+  const [deepRuns, setDeepRuns] = useState([]);
+  const [selectedDeepRun, setSelectedDeepRun] = useState(0);
+
   // Backend configuration options
   const [algorithm, setAlgorithm] = useState("inside-out");
   const [agentTopology, setAgentTopology] = useState("8-directional");
@@ -734,6 +738,7 @@ const AgentShapeInterface = () => {
                     onChange={(e) => setGridSize(parseInt(e.target.value, 10))}
                     className="form-select"
                   >
+                    <option value={4}>4 x 4</option>
                     <option value={10}>10 x 10</option>
                     <option value={15}>15 x 15</option>
                     <option value={20}>20 x 20</option>
