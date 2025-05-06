@@ -843,7 +843,13 @@ const AgentShapeInterface = () => {
                     cellClassName += isTargetCell
                       ? "cell-target-highlight"
                       : "cell-shape";
-                  } else if (cell.type === "obstacle") {
+                  } else if (
+                    cell.type === "obstacle" ||
+                    (isSimulating &&
+                      simulationSteps[currentStep]?.obstacles?.some(
+                        (obs) => obs[0] === rowIndex && obs[1] === colIndex
+                      ))
+                  ) {
                     cellClassName += "cell-obstacle";
                   } else {
                     cellClassName += "cell-empty";
@@ -933,6 +939,7 @@ const AgentShapeInterface = () => {
                   <option value="deep">deep learning</option>
                   <option value="stochastic">Stochastic</option>
                   <option value="astar">A star algo</option>
+                  <option value="kmeans">Kmeans</option>
                 </select>
                 <p className="form-text">{getAlgorithmDescription()}</p>
               </div>
